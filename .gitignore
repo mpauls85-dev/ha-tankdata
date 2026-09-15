@@ -1,0 +1,10 @@
+resources/
+.local/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+.env*
+dist/
+.coverage
