@@ -6,7 +6,7 @@ Jeder Tank ist ein Gerät; mehrere Tanks erscheinen gemeinsam in der Oberfläche
 
 ## Installation
 
-Version **0.2.0**. HACS-Kategorie: **Integration**.
+Version **0.3.0**. HACS-Kategorie: **Integration**.
 
 ### Über HACS
 
@@ -34,8 +34,8 @@ Die gemeinsame Verwaltungsoberfläche ist für HA-Administratoren verfügbar:
 - Übersicht aller Tanks mit Litern, Prozent und Kapazität;
 - weitere Tanks als Geräte anlegen;
 - Verbraucher hinzufügen, bearbeiten und entfernen;
-- Befüllung, Entnahme, Beobachtung und Korrektur über Dialoge buchen;
-- Rekalkulation und Rücksetzen der Korrekturbasis ausdrücklich ausführen;
+- kompakte Bestandskarte mit isometrischer Tankgrafik und den Aktionen **Befüllen** und **Bestand korrigieren**;
+- Tankgerät direkt über den Kopfbereich öffnen; neue Tanks nur in der Übersicht hinzufügen;
 - Historie mit älteren Ereignissen laden und direkt zum Tankgerät wechseln.
 
 Die Anzeige aktualisiert sich alle 15 Sekunden; offene Eingaben werden dabei
@@ -43,15 +43,15 @@ nicht überschrieben. Buchungswiederholungen nach Verbindungsfehlern verwenden
 dieselbe Ereignis-ID. Außerhalb der Oberfläche stehen die normalen HA-Actions
 und Sensoren weiterhin zur Verfügung.
 
-### Aktualisierung von 0.1.x
+### Aktualisierung von 0.1.x / 0.2.x
 
 Bestehende Tanks werden weiterverwendet. Geräte- und Entity-IDs sowie Ledger
 bleiben erhalten; weder Neueinrichtung noch Löschen der Historie ist erforderlich.
-Vor Updates die HA-Konfiguration und die TankData-Stores sichern.
+Die bisherigen Verbraucher-Untereinträge werden beim Laden automatisch in eigene Einträge umgewandelt. Der zugeordnete Tank und die Buchungshistorie bleiben erhalten. Deaktivierte Tanks werden erst beim erneuten Aktivieren migriert. Vor Updates die HA-Konfiguration und die TankData-Stores sichern.
 
 ## Verbraucher einrichten
 
-Im Tank-Eintrag unter Geräte & Dienste einen **Verbraucher** hinzufügen. Mehrere Verbraucher und mehrere Tanks sind möglich. Eine Quelle, die mehrfach demselben Tank zugeordnet wird, zählt entsprechend mehrfach; nur tatsächlich getrennte Verbräuche zuordnen.
+Unter **Integration hinzufügen → TankData → Verbraucher** einen Verbraucher anlegen und seinen Tank auswählen. Tanks und Verbraucher erscheinen als eigene, flache Einträge unter Geräte & Dienste. Im TankData-Dashboard kann der Verbraucher weiterhin direkt beim Tank angelegt werden. Mehrere Verbraucher und mehrere Tanks sind möglich. Eine Quelle, die mehrfach demselben Tank zugeordnet wird, zählt entsprechend mehrfach; nur tatsächlich getrennte Verbräuche zuordnen.
 
 | Quelle | Eingang | Weitere Parameter |
 | --- | --- | --- |
@@ -101,13 +101,57 @@ data:
 
 ## Speicherung und Entwicklung
 
-Historie: `.storage/ha_tankdata.<entry_id>` (Store v1). Beschädigte oder unbekannte Versionen werden nicht überschrieben. Buchungen werden erst nach bestätigtem Speichern angezeigt. Das Entfernen eines Eintrags löscht seine Historiedatei nicht.
+Historie: `.storage/ha_tankdata.<entry_id>` (Store v2; vorhandene v1-Daten werden beim Laden verlustfrei ergänzt). Beschädigte oder unbekannte Versionen werden nicht überschrieben. Buchungen werden erst nach bestätigtem Speichern angezeigt. Das Entfernen eines Eintrags löscht seine Historiedatei nicht.
 
 Tests: `uv sync --group dev --locked`, `uv run pytest`, `uv run ruff check custom_components tests scripts`.
 
 Vor einem Update die HA-Konfiguration einschließlich der TankData-Stores sichern.
 Bei einer Rückkehr zur vorherigen Version die passende Sicherung verwenden.
 
-Kosten, Prognosen, komplexe Geometrien, Massemodelle und automatische Kalibrierung
-sind nicht enthalten. Zugangsdaten und lokale Betriebsdaten bleiben außerhalb
-der Versionsverwaltung. Geschätzte Durchsätze sind keine Brennstoffmessungen.
+## Funktionen ab 0.3.0
+
+Version 0.3.0 erweitert TankData um:
+
+- **Tankgeometrie:** Quader, stehender und liegender Zylinder, Kugel sowie eine
+  eigene Peiltabelle. Die Grafik zeigt die aus dem Volumen berechnete Füllhöhe;
+  die Tanks werden isometrisch mit sichtbarer Flüssigkeitsoberfläche dargestellt. Kapazität bleibt maßgeblich.
+  Ideale Formen berücksichtigen keine gewölbten Tankböden; dafür Peiltabelle nutzen.
+- **Messungen:** Liter, Volumenprozent oder Füllhöhe in cm. Für cm die innere Höhe
+  beziehungsweise den Durchmesser hinterlegen. Peiltabelle: je Zeile `cm;Liter`,
+  streng steigend von `0;0` bis Tankhöhe/Kapazität. Messung allein korrigiert den
+  berechneten Bestand nicht.
+- **Kosten:** Optionaler Gesamtpreis je neuer Befüllung und Preis des Initialbestands
+  in EUR/L. Verbrauchskosten und Bestandswert verwenden einen gleitenden gewichteten
+  Mischpreis. Fehlende Preise bleiben unbekannt; 0 EUR ist ein gültiger Preis.
+  Lieferausgaben und Verbrauchskosten werden getrennt gezeigt. Ein geänderter
+  Initialpreis aktualisiert auch die darauf beruhende Kostenhistorie.
+- **Statistik:** Heute sowie 7, 30 und 365 Tage, Tagesbalken, Tageswerte,
+  Verbrauch je Verbraucher, Laufzeit, Kosten und Datenabdeckung. Abdeckung ist erst
+  seit dieser Erweiterung verfügbar; frühere Lücken werden nicht als Nullverbrauch
+  interpretiert. Zeitbasierter Verbrauch wird auf lokale Kalendertage aufgeteilt.
+- **Prognosen:** Mittelwert vollständiger Tage aus den letzten 30 Tagen, mindestens
+  sieben vollständige aktuelle Tage. Anzeige für 7/30 Tage, Reserve und Leerstand.
+  Die Schwankungsspanne ist keine statistisch garantierte Vorhersage. Ohne aktuelle
+  belastbare Daten oder bei Nullverbrauch gibt es kein scheinbar genaues Leerdatum.
+  Wetter und Saisonalität werden in dieser ersten Fassung nicht modelliert.
+- **Betriebszustand:** An/Aus/Unbekannt im Dashboard und als HA-Binary-Sensor bei
+  Laufzustand, Leistung und Durchfluss. Ein kumulativer Zähler beweist keinen
+  aktuellen Betriebszustand. Quellenausfall bedeutet unbekannt, nicht ausgeschaltet.
+- **Kalibrierung mit Bestätigung:** Zwei reale Beobachtungen, mindestens 24 Stunden
+  Abstand, mindestens eine Stunde erfasste Laufzeit, mindestens 99 % Datenabdeckung
+  und eindeutig ein Verbraucher mit konfiguriertem Durchsatz sind erforderlich.
+  Befüllungen und manuelle Entnahmen werden berücksichtigt. Korrekturen, wechselnde
+  Parameter, weitere Verbraucher und wesentliche Datenlücken verhindern Vorschläge.
+  Die gemessene Entnahme muss über dem Zwanzigfachen der eingestellten Messunsicherheit
+  liegen. Vorschläge werden auf 2–20 % Änderung und die plausible Maximalrate begrenzt.
+  Dashboard und HA-Mitteilung fordern zur Prüfung auf: **Wert übernehmen / Ablehnen /
+  Später**. Erst Bestätigung ändert den tatsächlichen Durchsatz in L/h. Altwert,
+  Neuwert, Evidenz und Bestätigung bleiben gespeichert. Historische Verbrauchswerte
+  werden nicht umgeschrieben. Keine versteckten Korrekturfaktoren.
+
+Die zusätzlichen Einstellungen befinden sich beim Tank unter **Tank & Auswertung
+ einstellen**. Die bisherigen HA-Actions bleiben kompatibel; Preis und Messeinheit
+werden derzeit im Dashboard erfasst. Massemodelle und Temperaturkompensation sind
+nicht enthalten. Geschätzte Durchsätze sind keine Brennstoffmessungen.
+
+Zugangsdaten und lokale Betriebsdaten bleiben außerhalb der Versionsverwaltung.
