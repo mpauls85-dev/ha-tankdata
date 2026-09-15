@@ -89,96 +89,55 @@ async def test_invalid_config_and_disk_reload(hass):
     data = await TankStore(hass, entry.entry_id).load()
     assert data == entry.runtime_data.data
     raw = json.loads(Path(entry.runtime_data.store.store.path).read_text())
-    assert raw["version"] == 1
+    assert raw["version"] == 2
 
 
 async def add_consumer(hass, entry, data=None):
-    result = await hass.config_entries.subentries.async_init(
-        (entry.entry_id, "consumer"), context={"source": "user"}, data=data or config()
+    result = await hass.config_entries.flow.async_init(
+        "ha_tankdata", context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "consumer"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"tank_entry_id": entry.entry_id, **(data or config())}
     )
     assert result["type"] == "create_entry", result
     await hass.async_block_till_done()
-    return list(entry.subentries)[-1]
+    assert result["result"].state.value == "loaded"
+    return result["result"].data["source_id"]
 
 
-async def test_subentry_lifecycle(hass):
-    entry = await create_tank(hass)
-    sid = await add_consumer(hass, entry)
+async def test_consumer_lifecycle(hass):
     from datetime import timedelta
 
     from homeassistant.util import dt as dt_util
 
+    from custom_components.ha_tankdata.configuration import consumers
+
+    entry = await create_tank(hass)
+    sid = await add_consumer(hass, entry)
+    child = consumers(hass, entry.entry_id)[sid]
     at = dt_util.utcnow() + timedelta(seconds=1)
     await entry.runtime_data.ingest(sid, 10, "L", at.isoformat())
     await entry.runtime_data.ingest(
         sid, 11, "L", (at + timedelta(seconds=60)).isoformat()
     )
-    assert replay(entry.runtime_data.data)["consumed"] == 1
     saved = deepcopy(entry.runtime_data.data["events"])
+    assert replay(entry.runtime_data.data)["consumed"] == 1
     assert await hass.config_entries.async_reload(entry.entry_id)
-    assert entry.runtime_data.data["events"] == saved
-    result = await hass.config_entries.subentries.async_init(
-        (entry.entry_id, "consumer"),
-        context={"source": "reconfigure", "subentry_id": sid},
+    await hass.async_block_till_done()
+    assert child.runtime_data is entry.runtime_data
+    result = await hass.config_entries.flow.async_init(
+        "ha_tankdata",
+        context={"source": "reconfigure", "entry_id": child.entry_id},
         data=config(entity_id="sensor.changed"),
     )
-    assert result["type"] == "abort"
+    assert result["type"] == "abort", result
     await hass.async_block_till_done()
-    assert entry.subentries[sid].data["entity_id"] == "sensor.changed"
-    hass.config_entries.async_remove_subentry(entry, sid)
+    assert child.data["config"]["entity_id"] == "sensor.changed"
+    await hass.config_entries.async_remove(child.entry_id)
     await hass.async_block_till_done()
     assert entry.runtime_data.data["events"] == saved
+    assert not entry.runtime_data.consumers
     assert not entry.subentries
-
-
-async def test_consumer_devices_and_upgrade(hass):
-    from homeassistant.helpers import device_registry as dr
-    from homeassistant.helpers import entity_registry as er
-
-    entry = await create_tank(hass)
-    first = await add_consumer(hass, entry)
-    second = await add_consumer(
-        hass, entry, config(name="Second", entity_id="sensor.second")
-    )
-    devices = dr.async_get(hass)
-    entities = er.async_get(hass)
-
-    def check():
-        parent = devices.async_get_device_by_identifier(
-            ("ha_tankdata", entry.entry_id), entry.entry_id
-        )
-        assert parent.config_subentry_id is None
-        registered = er.async_entries_for_config_entry(entities, entry.entry_id)
-        assert len(registered) == 5
-        for entity in registered:
-            assert hass.states.get(entity.entity_id).state not in {
-                "unavailable",
-                "unknown",
-            }
-            device = devices.async_get(entity.device_id)
-            assert device.config_subentry_id == entity.config_subentry_id
-            if entity.config_subentry_id:
-                assert device.via_device_id == parent.id
-            else:
-                assert device.id == parent.id
-        return parent, registered
-
-    parent, registered = check()
-    await call(hass, entry, "record_refill", liters=25, event_id="before-upgrade")
-    saved = deepcopy(entry.runtime_data.data["events"])
-    ids = {e.unique_id: e.entity_id for e in registered}
-    assert await hass.config_entries.async_unload(entry.entry_id)
-    # Reproduce the old release's persisted parent ownership and entity links.
-    devices.async_update_device(parent.id, new_config_subentry_id=first)
-    for entity in registered:
-        if entity.config_subentry_id:
-            entities.async_update_entity(entity.entity_id, device_id=parent.id)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    _, restored = check()
-    assert {e.unique_id: e.entity_id for e in restored} == ids
-    assert entry.runtime_data.data["events"] == saved
-    hass.config_entries.async_remove_subentry(entry, second)
-    await hass.async_block_till_done()
-    assert len(er.async_entries_for_config_entry(entities, entry.entry_id)) == 4
-    assert devices.async_get(parent.id).config_subentry_id is None

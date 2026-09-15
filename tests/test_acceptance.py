@@ -192,6 +192,8 @@ async def test_previous_real_store_loads_unchanged(hass, fixture):
     path.parent.mkdir(exist_ok=True)
     path.write_text(json.dumps(raw))
     loaded = await store.load()
-    assert loaded == raw["data"]
+    assert {k: v for k, v in loaded.items() if k != "analysis"} == raw["data"]
+    assert loaded["analysis"]["intervals"] == []
+    assert json.loads(path.read_text()) == raw
     await store.save(loaded)
     assert await TankStore(hass, entry_id).load() == loaded

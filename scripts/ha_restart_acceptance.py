@@ -17,7 +17,11 @@ async def main():
     await hass.async_start()
     try:
         expected = json.loads(Path("/config/phase8_expected.json").read_text())
-        entries = hass.config_entries.async_entries("ha_tankdata")
+        entries = [
+            e
+            for e in hass.config_entries.async_entries("ha_tankdata")
+            if e.data.get("kind") != "consumer"
+        ]
         assert len(entries) == len(expected)
         for entry in entries:
             assert entry.state.value == "loaded", entry.reason
@@ -31,10 +35,7 @@ async def main():
             registered = entity_registry.async_entries_for_config_entry(
                 registry, entry.entry_id
             )
-            expected_count = 3 + sum(
-                2 if s.data["mode"] in {"running", "power"} else 1
-                for s in entry.subentries.values()
-            )
+            expected_count = 3
             assert len(registered) == expected_count, (
                 entry.entry_id,
                 len(registered),

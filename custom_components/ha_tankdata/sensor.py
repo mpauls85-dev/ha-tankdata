@@ -2,38 +2,36 @@
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.helpers.device_registry import (
-    DeviceEntryType,
     DeviceInfo,
     async_get_device_id_by_identifier,
 )
 
+from .configuration import is_consumer
 from .const import DOMAIN
 from .model import replay
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    async_add_entities(
-        [
-            TankSensor(entry, key, name, unit)
-            for key, name, unit in [
-                ("stock", "Bestand", "L"),
-                ("percent", "Füllstand", "%"),
-                ("consumed", "Verbrauch", "L"),
-            ]
-        ]
-    )
-    for source_id, subentry in entry.subentries.items():
+    if is_consumer(entry):
+        tank = hass.config_entries.async_get_entry(entry.data["tank_entry_id"])
+        sid = entry.data["source_id"]
+        keys = [("consumed", "L")]
+        if entry.data["config"]["mode"] in {"running", "power"}:
+            keys.append(("runtime", "h"))
+        async_add_entities(
+            [ConsumerSensor(tank, sid, entry.title, key, unit) for key, unit in keys]
+        )
+    else:
         async_add_entities(
             [
-                ConsumerSensor(entry, source_id, subentry.title, "consumed", "L"),
-            ],
-            config_subentry_id=source_id,
+                TankSensor(entry, key, name, unit)
+                for key, name, unit in [
+                    ("stock", "Bestand", "L"),
+                    ("percent", "Füllstand", "%"),
+                    ("consumed", "Verbrauch", "L"),
+                ]
+            ]
         )
-        if subentry.data["mode"] in {"running", "power"}:
-            async_add_entities(
-                [ConsumerSensor(entry, source_id, subentry.title, "runtime", "h")],
-                config_subentry_id=source_id,
-            )
 
 
 class TankSensor(SensorEntity):
@@ -52,6 +50,7 @@ class TankSensor(SensorEntity):
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
             manufacturer="TankData",
+            model="Tank",
         )
 
     @property
@@ -68,8 +67,7 @@ class TankSensor(SensorEntity):
             "out_of_bounds": replay(self.runtime.data)["out_of_bounds"],
             "event_count": len(self.runtime.data["events"]),
             "incomplete_sources": sum(
-                not self.runtime.source_valid(sid)
-                for sid in self.runtime.entry.subentries
+                not self.runtime.source_valid(sid) for sid in self.runtime.consumers
             ),
         }
 
@@ -87,8 +85,9 @@ class ConsumerSensor(TankSensor):
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{entry.entry_id}_{source_id}")},
             name=title,
-            entry_type=DeviceEntryType.SERVICE,
+            entry_type=None,
             manufacturer="TankData",
+            model="Verbraucher",
             via_device_id=async_get_device_id_by_identifier(
                 self.runtime.hass,
                 (DOMAIN, entry.entry_id),

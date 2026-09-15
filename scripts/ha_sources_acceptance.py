@@ -13,6 +13,18 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.util import dt as dt_util
 
 
+async def add_consumer(hass, tank, data):
+    flow = await hass.config_entries.flow.async_init(
+        "ha_tankdata", context={"source": "user"}
+    )
+    flow = await hass.config_entries.flow.async_configure(
+        flow["flow_id"], {"next_step_id": "consumer"}
+    )
+    return await hass.config_entries.flow.async_configure(
+        flow["flow_id"], {"tank_entry_id": tank.entry_id, **data}
+    )
+
+
 async def main():
     hass = HomeAssistant("/config")
     loader.async_setup(hass)
@@ -36,11 +48,7 @@ async def main():
             "max_rate_lph": 100,
         }
         for entity_id in ("sensor.test_counter", "sensor.other_counter"):
-            result = await hass.config_entries.subentries.async_init(
-                (entry.entry_id, "consumer"),
-                context={"source": "user"},
-                data={**config, "entity_id": entity_id},
-            )
+            result = await add_consumer(hass, entry, {**config, "entity_id": entity_id})
             assert result["type"] == "create_entry"
             await hass.async_block_till_done()
         base = dt_util.utcnow() + timedelta(seconds=1)
@@ -62,22 +70,20 @@ async def main():
         saved = deepcopy(entry.runtime_data.data["events"])
         assert await hass.config_entries.async_reload(entry.entry_id)
         assert entry.runtime_data.data["events"] == saved
-        sid = list(entry.subentries)[0]
-        result = await hass.config_entries.subentries.async_init(
-            (entry.entry_id, "consumer"),
-            context={"source": "reconfigure", "subentry_id": sid},
+        child = next(iter(entry.runtime_data.consumers.values()))
+        result = await hass.config_entries.flow.async_init(
+            "ha_tankdata",
+            context={"source": "reconfigure", "entry_id": child.entry_id},
             data={**config, "entity_id": "sensor.replaced"},
         )
         assert result["type"] == "abort"
         await hass.async_block_till_done()
-        hass.config_entries.async_remove_subentry(entry, sid)
+        await hass.config_entries.async_remove(child.entry_id)
         await hass.async_block_till_done()
         assert entry.runtime_data.data["events"] == saved
         assert len(entry.runtime_data.unsubscribers) == 3
         flow = {**config, "mode": "flow", "entity_id": "sensor.flow"}
-        result = await hass.config_entries.subentries.async_init(
-            (entry.entry_id, "consumer"), context={"source": "user"}, data=flow
-        )
+        result = await add_consumer(hass, entry, flow)
         assert result["type"] == "create_entry"
         await hass.async_block_till_done()
         base = dt_util.utcnow() + timedelta(seconds=1)
@@ -105,9 +111,7 @@ async def main():
             "entity_id": "binary_sensor.running",
             "rate_lph": 60,
         }
-        result = await hass.config_entries.subentries.async_init(
-            (entry.entry_id, "consumer"), context={"source": "user"}, data=running
-        )
+        result = await add_consumer(hass, entry, running)
         assert result["type"] == "create_entry"
         await hass.async_block_till_done()
         base = dt_util.utcnow() + timedelta(seconds=1)
@@ -134,9 +138,7 @@ async def main():
             "on_threshold_w": 20,
             "off_threshold_w": 10,
         }
-        result = await hass.config_entries.subentries.async_init(
-            (entry.entry_id, "consumer"), context={"source": "user"}, data=power
-        )
+        result = await add_consumer(hass, entry, power)
         assert result["type"] == "create_entry"
         await hass.async_block_till_done()
         base = dt_util.utcnow() + timedelta(seconds=1)
@@ -167,9 +169,7 @@ async def main():
             "max_gap_seconds": 120,
         }
         hass.states.async_set("binary_sensor.timer", "on")
-        result = await hass.config_entries.subentries.async_init(
-            (entry.entry_id, "consumer"), context={"source": "user"}, data=timer
-        )
+        result = await add_consumer(hass, entry, timer)
         assert result["type"] == "create_entry"
         await hass.async_block_till_done()
         print(
@@ -213,6 +213,7 @@ async def main():
                 {
                     e.entry_id: e.runtime_data.data["events"]
                     for e in hass.config_entries.async_entries("ha_tankdata")
+                    if e.data.get("kind") != "consumer"
                 }
             )
         )

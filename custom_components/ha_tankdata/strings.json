@@ -2,58 +2,59 @@
   "title": "TankData",
   "config": {
     "step": {
-      "user": {
+      "tank": {
         "title": "Tank anlegen",
         "data": {
           "name": "Name",
           "capacity": "Kapazität (Liter)",
           "initial": "Initialbestand (Liter)"
         }
+      },
+      "user": {
+        "title": "TankData",
+        "menu_options": {
+          "tank": "Tank",
+          "consumer": "Verbraucher"
+        }
+      },
+      "consumer": {
+        "title": "Verbraucher konfigurieren",
+        "data": {
+          "name": "Name",
+          "mode": "Verbrauchsquelle",
+          "entity_id": "Quell-Entity",
+          "max_gap_seconds": "Maximale Datenlücke (Sekunden)",
+          "max_rate_lph": "Maximal plausibler Verbrauch (l/h)",
+          "rate_lph": "Durchsatz im Betrieb (l/h; nur Laufzustand und Leistung)",
+          "on_threshold_w": "Einschaltschwelle (W; nur Leistung)",
+          "off_threshold_w": "Ausschaltschwelle (W; nur Leistung)",
+          "tank_entry_id": "Tank"
+        },
+        "description": "Zähler: L oder m³. Durchfluss: l/h, L/h, l/min, L/min oder m³/h. Laufzustand: on/off. Leistung: W oder kW. Die maximale Datenlücke begrenzt die Gültigkeit der letzten Quellenmeldung."
+      },
+      "reconfigure": {
+        "title": "Verbraucher konfigurieren",
+        "data": {
+          "name": "Name",
+          "mode": "Verbrauchsquelle",
+          "entity_id": "Quell-Entity",
+          "max_gap_seconds": "Maximale Datenlücke (Sekunden)",
+          "max_rate_lph": "Maximal plausibler Verbrauch (l/h)",
+          "rate_lph": "Durchsatz im Betrieb (l/h; nur Laufzustand und Leistung)",
+          "on_threshold_w": "Einschaltschwelle (W; nur Leistung)",
+          "off_threshold_w": "Ausschaltschwelle (W; nur Leistung)"
+        },
+        "description": "Zähler: L oder m³. Durchfluss: l/h, L/h, l/min, L/min oder m³/h. Laufzustand: on/off. Leistung: W oder kW. Die maximale Datenlücke begrenzt die Gültigkeit der letzten Quellenmeldung."
       }
     },
     "error": {
-      "invalid_tank": "Gültigen Namen und Bestand zwischen 0 und Kapazität eingeben."
-    }
-  },
-  "config_subentries": {
-    "consumer": {
-      "entry_type": "Verbraucher",
-      "step": {
-        "user": {
-          "title": "Verbraucher konfigurieren",
-          "data": {
-            "name": "Name",
-            "mode": "Verbrauchsquelle",
-            "entity_id": "Quell-Entity",
-            "max_gap_seconds": "Maximale Datenlücke (Sekunden)",
-            "max_rate_lph": "Maximal plausibler Verbrauch (l/h)",
-            "rate_lph": "Durchsatz im Betrieb (l/h; nur Laufzustand und Leistung)",
-            "on_threshold_w": "Einschaltschwelle (W; nur Leistung)",
-            "off_threshold_w": "Ausschaltschwelle (W; nur Leistung)"
-          },
-          "description": "Zähler: L oder m³. Durchfluss: l/h, L/h, l/min, L/min oder m³/h. Laufzustand: on/off. Leistung: W oder kW. Die maximale Datenlücke begrenzt die Gültigkeit der letzten Quellenmeldung."
-        },
-        "reconfigure": {
-          "title": "Verbraucher konfigurieren",
-          "data": {
-            "name": "Name",
-            "mode": "Verbrauchsquelle",
-            "entity_id": "Quell-Entity",
-            "max_gap_seconds": "Maximale Datenlücke (Sekunden)",
-            "max_rate_lph": "Maximal plausibler Verbrauch (l/h)",
-            "rate_lph": "Durchsatz im Betrieb (l/h; nur Laufzustand und Leistung)",
-            "on_threshold_w": "Einschaltschwelle (W; nur Leistung)",
-            "off_threshold_w": "Ausschaltschwelle (W; nur Leistung)"
-          },
-          "description": "Zähler: L oder m³. Durchfluss: l/h, L/h, l/min, L/min oder m³/h. Laufzustand: on/off. Leistung: W oder kW. Die maximale Datenlücke begrenzt die Gültigkeit der letzten Quellenmeldung."
-        }
-      },
-      "error": {
-        "invalid_consumer": "Quelle und positive Grenzwerte prüfen."
-      },
-      "abort": {
-        "reconfigure_successful": "Verbraucher aktualisiert."
-      }
+      "invalid_tank": "Gültigen Namen und Bestand zwischen 0 und Kapazität eingeben.",
+      "invalid_consumer": "Quelle und positive Grenzwerte prüfen."
+    },
+    "abort": {
+      "no_tanks": "Bitte zuerst einen Tank anlegen.",
+      "tank_fixed": "Bestand über die Tank-Aktionen ändern.",
+      "reconfigure_successful": "Verbraucher aktualisiert."
     }
   }
 }
