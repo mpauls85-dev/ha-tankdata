@@ -1,0 +1,59 @@
+{
+  "title": "TankData",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add tank",
+        "data": {
+          "name": "Name",
+          "capacity": "Capacity (litres)",
+          "initial": "Initial stock (litres)"
+        }
+      }
+    },
+    "error": {
+      "invalid_tank": "Enter a name and a stock between zero and the tank capacity."
+    }
+  },
+  "config_subentries": {
+    "consumer": {
+      "entry_type": "Consumer",
+      "step": {
+        "user": {
+          "title": "Configure consumer",
+          "data": {
+            "name": "Name",
+            "mode": "Consumption source",
+            "entity_id": "Source entity",
+            "max_gap_seconds": "Maximum data gap (seconds)",
+            "max_rate_lph": "Maximum plausible rate (L/h)",
+            "rate_lph": "Rate while running (L/h; running and power only)",
+            "on_threshold_w": "Turn on at power (W; power only)",
+            "off_threshold_w": "Turn off at power (W; power only)"
+          },
+          "description": "Counter: L or cubic metres. Flow: L/h, L/min or cubic metres/h. Running: on/off. Power: W or kW. The maximum data gap limits the validity of the last source report."
+        },
+        "reconfigure": {
+          "title": "Configure consumer",
+          "data": {
+            "name": "Name",
+            "mode": "Consumption source",
+            "entity_id": "Source entity",
+            "max_gap_seconds": "Maximum data gap (seconds)",
+            "max_rate_lph": "Maximum plausible rate (L/h)",
+            "rate_lph": "Rate while running (L/h; running and power only)",
+            "on_threshold_w": "Turn on at power (W; power only)",
+            "off_threshold_w": "Turn off at power (W; power only)"
+          },
+          "description": "Changes apply to future intervals. Existing history is retained."
+        }
+      },
+      "error": {
+        "invalid_consumer": "Check the source, positive limits and power thresholds."
+      },
+      "abort": {
+        "reconfigure_successful": "Consumer updated."
+      }
+    }
+  }
+}
