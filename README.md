@@ -105,7 +105,8 @@ Historie: `.storage/ha_tankdata.<entry_id>` (Store v1). Beschädigte oder unbeka
 
 Tests: `uv sync --group dev --locked`, `uv run pytest`, `uv run ruff check custom_components tests scripts`.
 
-[Sicherung, Rückkehr und Grenzen](docs/BETRIEB.md) · [Entwicklungsplan](docs/ENTWICKLUNGSPLAN.md) · [Fortschritt](docs/FORTSCHRITT.md) · [Architektur](docs/ARCHITEKTUR.md)
+Vor einem Update die HA-Konfiguration einschließlich der TankData-Stores sichern.
+Bei einer Rückkehr zur vorherigen Version die passende Sicherung verwenden.
 
 Kosten, Prognosen, komplexe Geometrien, Massemodelle und automatische Kalibrierung
 sind nicht enthalten. Zugangsdaten und lokale Betriebsdaten bleiben außerhalb
