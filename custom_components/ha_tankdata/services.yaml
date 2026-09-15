@@ -1,0 +1,106 @@
+record_observation:
+  name: Messung dokumentieren
+  description: Messung dokumentieren für einen Tank.
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: ha_tankdata
+    liters:
+      required: true
+      selector:
+        number:
+          min: 0
+          step: any
+          mode: box
+          unit_of_measurement: L
+    event_id:
+      description: Optionale eindeutige Buchungs-ID für Wiederholungsschutz.
+      selector:
+        text:
+record_refill:
+  name: Befüllung buchen
+  description: Befüllung buchen für einen Tank.
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: ha_tankdata
+    liters:
+      required: true
+      selector:
+        number:
+          min: 0
+          step: any
+          mode: box
+          unit_of_measurement: L
+    event_id:
+      description: Optionale eindeutige Buchungs-ID für Wiederholungsschutz.
+      selector:
+        text:
+record_withdrawal:
+  name: Entnahme buchen
+  description: Entnahme buchen für einen Tank.
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: ha_tankdata
+    liters:
+      required: true
+      selector:
+        number:
+          min: 0
+          step: any
+          mode: box
+          unit_of_measurement: L
+    event_id:
+      description: Optionale eindeutige Buchungs-ID für Wiederholungsschutz.
+      selector:
+        text:
+apply_correction:
+  name: Bestand korrigieren
+  description: Bestand korrigieren für einen Tank.
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: ha_tankdata
+    liters:
+      required: true
+      selector:
+        number:
+          min: 0
+          step: any
+          mode: box
+          unit_of_measurement: L
+    event_id:
+      description: Optionale eindeutige Buchungs-ID für Wiederholungsschutz.
+      selector:
+        text:
+reset_calibration:
+  name: Korrekturbasis zurücksetzen
+  description: Korrekturbasis zurücksetzen für einen Tank.
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: ha_tankdata
+    event_id:
+      description: Optionale eindeutige Buchungs-ID für Wiederholungsschutz.
+      selector:
+        text:
+recalculate:
+  name: Neu berechnen
+  description: Neu berechnen für einen Tank.
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: ha_tankdata
