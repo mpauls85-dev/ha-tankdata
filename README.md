@@ -116,7 +116,8 @@ Version 0.3.0 erweitert TankData um:
   eigene Peiltabelle. Die Grafik zeigt die aus dem Volumen berechnete Füllhöhe;
   die Tanks werden isometrisch mit sichtbarer Flüssigkeitsoberfläche dargestellt. Kapazität bleibt maßgeblich.
   Ideale Formen berücksichtigen keine gewölbten Tankböden; dafür Peiltabelle nutzen.
-- **Messungen:** Liter, Volumenprozent oder Füllhöhe in cm. Für cm die innere Höhe
+- **Messumrechnung:** Intern werden Liter, Volumenprozent und Füllhöhe in cm unterstützt.
+  Die regulären HA-Actions und der Korrekturdialog verwenden Liter. Für cm die innere Höhe
   beziehungsweise den Durchmesser hinterlegen. Peiltabelle: je Zeile `cm;Liter`,
   streng steigend von `0;0` bis Tankhöhe/Kapazität. Messung allein korrigiert den
   berechneten Bestand nicht.
@@ -149,9 +150,11 @@ Version 0.3.0 erweitert TankData um:
   Neuwert, Evidenz und Bestätigung bleiben gespeichert. Historische Verbrauchswerte
   werden nicht umgeschrieben. Keine versteckten Korrekturfaktoren.
 
-Die zusätzlichen Einstellungen befinden sich beim Tank unter **Tank & Auswertung
- einstellen**. Die bisherigen HA-Actions bleiben kompatibel; Preis und Messeinheit
-werden derzeit im Dashboard erfasst. Massemodelle und Temperaturkompensation sind
+Die zusätzlichen Einstellungen befinden sich beim Tank unter **Einstellungen**.
+Im Dashboard stehen **Befüllen** (mit optionalem Preis) und **Bestand korrigieren**
+zur Verfügung. Messbeobachtungen für die Kalibrierung werden über die HA-Action
+`ha_tankdata.record_observation` in Litern erfasst. Die weiteren bestehenden
+HA-Actions bleiben kompatibel. Massemodelle und Temperaturkompensation sind
 nicht enthalten. Geschätzte Durchsätze sind keine Brennstoffmessungen.
 
 Zugangsdaten und lokale Betriebsdaten bleiben außerhalb der Versionsverwaltung.
