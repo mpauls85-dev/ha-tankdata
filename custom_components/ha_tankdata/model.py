@@ -29,7 +29,15 @@ def new_tank(capacity, initial):
     initial = number(initial)
     if initial > capacity:
         raise ValueError("Initial stock exceeds capacity")
-    return {"capacity": capacity, "initial": initial, "events": [], "sources": {}}
+    from .analysis import defaults
+
+    return {
+        "capacity": capacity,
+        "initial": initial,
+        "events": [],
+        "sources": {},
+        "analysis": defaults(),
+    }
 
 
 def replay(data):
@@ -52,6 +60,10 @@ def replay(data):
         if kind not in KINDS:
             raise ValueError("Unknown event kind")
         liters = number(event["liters"])
+        if "total_cost" in event:
+            if kind != "refill" or liters <= 0:
+                raise ValueError("Cost requires a positive refill")
+            number(event["total_cost"])
         if kind in {"observation", "correction"} and liters > base["capacity"]:
             raise ValueError("Measurement exceeds capacity")
         if kind == "reset" and liters != 0:
@@ -80,10 +92,13 @@ def replay(data):
 
 
 def validate(data):
-    if set(data) != {"capacity", "initial", "events", "sources"}:
+    if set(data) != {"capacity", "initial", "events", "sources", "analysis"}:
         raise ValueError("Unknown tank data format")
     if not isinstance(data["events"], list) or not isinstance(data["sources"], dict):
         raise ValueError("Invalid ledger structure")
+    from .analysis import validate_analysis
+
+    validate_analysis(data)
     state = replay(data)
     if not all(isfinite(state[k]) for k in ("stock", "percent", "consumed", "runtime")):
         raise ValueError("Tank totals overflow")

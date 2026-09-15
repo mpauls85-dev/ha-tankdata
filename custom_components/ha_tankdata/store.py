@@ -12,7 +12,7 @@ from .model import validate
 class TankStore:
     def __init__(self, hass, entry_id):
         self.hass = hass
-        self.store = Store(hass, 1, f"ha_tankdata.{entry_id}", atomic_writes=True)
+        self.store = Store(hass, 2, f"ha_tankdata.{entry_id}", atomic_writes=True)
 
     def _read(self):
         path = Path(self.store.path)
@@ -22,11 +22,18 @@ class TankStore:
             return None
         if not isinstance(raw, dict):
             raise ValueError("Invalid TankData store envelope")
-        if (raw.get("version"), raw.get("minor_version", 1)) != (1, 1):
+        if (raw.get("version"), raw.get("minor_version", 1)) not in {(1, 1), (2, 1)}:
             raise ValueError("Unsupported TankData store version")
         if raw.get("key") != self.store.key:
             raise ValueError("TankData store key mismatch")
-        return validate(raw["data"])
+        data = raw["data"]
+        if raw["version"] == 1:
+            if set(data) != {"capacity", "initial", "events", "sources"}:
+                raise ValueError("Invalid legacy data")
+            from .analysis import defaults
+
+            data = {**data, "analysis": defaults()}
+        return validate(data)
 
     async def load(self):
         # Preflight prevents HA's generic corrupt-file recovery from creating
