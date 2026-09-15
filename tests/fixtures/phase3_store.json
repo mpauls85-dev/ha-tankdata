@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "minor_version": 1,
+  "key": "ha_tankdata.01M2JH3BFTVJVX9SE6G9AMQCPS",
+  "data": {
+    "capacity": 1000.0,
+    "initial": 500.0,
+    "events": [
+      {
+        "id": "one",
+        "at": "2026-09-15T12:36:34.467323+00:00",
+        "kind": "refill",
+        "liters": 100.0
+      },
+      {
+        "id": "c83e4672cddc4128a1bbf091c3f31a6c",
+        "at": "2026-09-15T12:36:34.491151+00:00",
+        "kind": "observation",
+        "liters": 590.0
+      },
+      {
+        "id": "01c02c6f96894e06931dc6f61e769ea2",
+        "at": "2026-09-15T12:36:34.502149+00:00",
+        "kind": "withdrawal",
+        "liters": 10.0
+      },
+      {
+        "id": "f472b44c4d6441559f54fd65f5c91b47",
+        "at": "2026-09-15T12:36:34.513391+00:00",
+        "kind": "correction",
+        "liters": 580.0
+      },
+      {
+        "id": "8da9ec566c5346ea9ac5434b25631186",
+        "at": "2026-09-15T12:36:34.524376+00:00",
+        "kind": "reset",
+        "liters": 0
+      }
+    ],
+    "sources": {}
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "minor_version": 1,
+  "key": "ha_tankdata.01M2JHBG8ZPKQE6Z2JVPK4H6Y4",
+  "data": {
+    "capacity": 1000.0,
+    "initial": 500.0,
+    "events": [
+      {
+        "id": "01M2JHBG9WVJ043QWS1878WXKQ:2026-09-15T12:42:02.538545+00:00",
+        "at": "2026-09-15T12:41:01.549481+00:00",
+        "kind": "consumption",
+        "source_id": "01M2JHBG9WVJ043QWS1878WXKQ",
+        "liters": 1.0,
+        "runtime_seconds": 0,
+        "start": "2026-09-15T12:41:02.538545+00:00",
+        "end": "2026-09-15T12:42:02.538545+00:00",
+        "input_before": 10.0,
+        "input_after": 11.0,
+        "config": {
+          "name": "Counter",
+          "entity_id": "sensor.test_counter",
+          "mode": "counter",
+          "max_gap_seconds": 3600,
+          "max_rate_lph": 100
+        }
+      },
+      {
+        "id": "01M2JHBG9WVJ043QWS1878WXKQ:2026-09-15T12:43:02.538545+00:00",
+        "at": "2026-09-15T12:41:01.560303+00:00",
+        "kind": "consumption",
+        "source_id": "01M2JHBG9WVJ043QWS1878WXKQ",
+        "liters": 1.0,
+        "runtime_seconds": 0,
+        "start": "2026-09-15T12:42:02.538545+00:00",
+        "end": "2026-09-15T12:43:02.538545+00:00",
+        "input_before": 11.0,
+        "input_after": 12.0,
+        "config": {
+          "name": "Counter",
+          "entity_id": "sensor.test_counter",
+          "mode": "counter",
+          "max_gap_seconds": 3600,
+          "max_rate_lph": 100
+        }
+      }
+    ],
+    "sources": {
+      "01M2JHBG9WVJ043QWS1878WXKQ": {
+        "config": {
+          "name": "Counter",
+          "entity_id": "sensor.test_counter",
+          "mode": "counter",
+          "max_gap_seconds": 3600,
+          "max_rate_lph": 100
+        },
+        "at": "2026-09-15T12:43:02.538545+00:00",
+        "value": 12.0
+      },
+      "01M2JHBGAAAN0B6HRC9ARF0FTS": {
+        "config": {
+          "entity_id": "sensor.other_counter",
+          "max_gap_seconds": 3600,
+          "max_rate_lph": 100,
+          "mode": "counter",
+          "name": "Counter"
+        },
+        "at": "2026-09-15T12:47:43.925321+00:00",
+        "value": null,
+        "raw_value": null,
+        "unit": null
+      }
+    }
+  }
+}
