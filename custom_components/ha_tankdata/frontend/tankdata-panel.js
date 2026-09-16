@@ -20,11 +20,18 @@ class TankDataPanel extends HTMLElement {
     this.shadowRoot.addEventListener("submit", e => this.submit(e));
     this.shadowRoot.addEventListener("change", e => {
       if (e.target.name === "mode") this.consumerFields(e.target.value);
+      if (e.target.name === "unit") this.measurementFields(e.target.value);
+      if (e.target.name === "report-anchor") this.changeReportAnchor(e.target);
     });
   }
   set hass(value) {
     this._hass = value;
     if (!this.started && this.isConnected) this.start();
+  }
+  set narrow(value) {
+    this._narrow = value;
+    const bar = this.shadowRoot.querySelector("ha-top-app-bar-fixed");
+    if (bar) bar.narrow = value;
   }
   connectedCallback() { if (this._hass) this.start(); }
   disconnectedCallback() { clearInterval(this.timer); this.started = false; }
@@ -43,8 +50,8 @@ class TankDataPanel extends HTMLElement {
       this.version = data.version;
       this.error = "";
       if (this.selected && !this.tanks.some(t => t.id === this.selected)) this.selected = null;
-      if (this.selected && !this.olderHistory) await this.loadHistory();
-      if (this.selected && this.reportTank === this.selected) this.report = await this._hass.callWS({type:"ha_tankdata/manage",config_entry_id:this.selected,operation:"statistics",parameters:{days:this.report.days.length}});
+      if (this.selected) await this.loadHistory();
+      if (this.selected && this.reportTank === this.selected && !this.reportLoading) await this.loadReport(this.reportSelection);
       if (!this.modal) this.render();
     } catch (e) {
       this.error = e.message || "Verbindung zu Home Assistant fehlgeschlagen.";
@@ -55,23 +62,53 @@ class TankDataPanel extends HTMLElement {
     const id = this.selected;
     const tank = this.tanks.find(t => t.id === id);
     if (!tank || tank.status !== "loaded") { this.history = []; return; }
-    const request = {type:"ha_tankdata/get_history",config_entry_id:id,limit:50};
+    const request = {type:"ha_tankdata/get_history",config_entry_id:id,limit:50,grouped:true};
     if (more) request.before = this.before;
-    const result = await this._hass.callWS(request);
+    let result = await this._hass.callWS(request);
+    let rows = result.events;
+    if (!more) {
+      while (result.before && rows.length < this.history.length) {
+        result = await this._hass.callWS({...request,before:result.before});
+        rows = rows.concat(result.events);
+      }
+    }
     if (this.selected !== id) return;
-    this.history = more ? this.history.concat(result.events) : result.events;
+    this.history = more ? this.history.concat(rows) : rows;
+    this.historyCount = result.count;
     this.before = result.before;
     this.olderHistory = more;
   }
+  historyView(t) {
+    const date = value => esc(new Date(value).toLocaleString("de-DE",{timeZone:this._hass.config?.time_zone}));
+    const duration = seconds => `${Math.floor(seconds/3600)} h ${Math.floor(seconds%3600/60)} min ${Math.floor(seconds%60)} s`;
+    const source = e => esc(t.consumers.find(c=>c.id===e.source_id)?.name || (e.source_id?"Früherer Verbraucher":"Manuell"));
+    const rawRow = e => `<tr><td>${date(e.start||e.at)}${e.end?`<br>bis ${date(e.end)}`:""}</td><td>${esc(kinds[e.kind]||e.kind)}</td><td>${e.kind==="reset"?"–":`${number(e.liters,3)} L`}</td><td>${source(e)}</td><td>${e.runtime_seconds?duration(e.runtime_seconds):e.total_cost!==undefined?`${number(e.total_cost,2)} €`:e.measurement?`${number(e.measurement.value,2)} ${esc(e.measurement.unit)}`:"–"}</td></tr>`;
+    const rows = this.history.map(e=>{
+      if(e.kind!=="run") return rawRow(e);
+      return `<tr><td>${date(e.start)}<br>${e.status==="running"?"Bislang":e.status==="finished"?"Ende":"Erfasst bis"} ${date(e.end)}</td><td>Lauf <span class="badge ${e.status==="interrupted"?"warn":""}">${{running:"Läuft",finished:"Beendet",interrupted:"Unterbrochen"}[e.status]}</span></td><td>${number(e.liters,3)} L</td><td>${source(e)}</td><td>${duration(e.runtime_seconds)}</td></tr>`;
+    }).join("");
+    return `<section><div class="section-heading"><h2>Historie <small>${this.historyCount??this.history.length} ${(this.historyCount??this.history.length)===1?"Eintrag":"Einträge"}</small></h2><button data-action="history-refresh">Aktualisieren</button></div>${rows?`<div class="table-scroll"><table><thead><tr><th>Zeitraum</th><th>Ereignis</th><th>Menge / Bestand</th><th>Quelle</th><th>Laufzeit / Details</th></tr></thead><tbody>${rows}</tbody></table></div>${this.before?'<button data-action="more-history">Ältere laden</button>':""}`:'<p class="muted">Keine Buchungen.</p>'}</section>`;
+  }
   render() {
     const tank = this.tanks.find(t => t.id === this.selected);
-    this.shadowRoot.innerHTML = `<style>${this.styles()}</style>
-      <header><img class="brand-icon" src="/ha_tankdata_brand/icon.png" alt="TankData"><span class="brand">TankData</span><span class="version">${esc(this.version || "")}</span><a href="/config/integrations/integration/ha_tankdata">Integration</a></header>
+    // Keep an open native calendar mounted during refresh.
+    if (this.shadowRoot.activeElement?.name === "report-anchor") return;
+    // Keep HA's header and scroll container mounted during periodic refreshes.
+    if (!this.shadowRoot.querySelector("ha-top-app-bar-fixed")) {
+      this.shadowRoot.innerHTML = `<style>${this.styles()}</style>
+        <ha-top-app-bar-fixed>
+          <span slot="title">TankData</span>
+          <a slot="actionItems" class="integration-link" href="/config/integrations/integration/ha_tankdata">Integration</a>
+          <div id="panel-content"></div>
+        </ha-top-app-bar-fixed><div id="dialog-host"></div>`;
+      this.shadowRoot.querySelector("ha-top-app-bar-fixed").narrow = Boolean(this._narrow);
+    }
+    this.shadowRoot.querySelector("#panel-content").innerHTML = `
       <main>${tank ? `<button class="back" data-action="overview">← Alle Tanks</button>` : ""}<div class="heading"><div><h1>${tank ? esc(tank.name) : "Tanks"}</h1></div>${tank ? (tank.device_id ? `<a class="ha-device" href="/config/devices/device/${esc(tank.device_id)}">In Home Assistant öffnen ↗</a>` : "") : `<button class="primary" data-action="new-tank">＋ Tank hinzufügen</button>`}</div>
       ${this.error ? `<p class="error" role="alert">${esc(this.error)} <button data-action="refresh">Erneut laden</button></p>` : ""}
       ${this.notice ? `<p class="notice" role="status">${esc(this.notice)}</p>` : ""}
       ${tank ? `${this.detail(tank)}` : `<div class="grid">${this.tanks.map(t => this.card(t)).join("")}</div>${this.tanks.length ? "" : `<section class="empty"><p>Noch keine Tanks.</p></section>`}`}
-      </main><div id="dialog-host"></div>`;
+      </main>`;
   }
   card(t) {
     const loaded = t.status === "loaded";
@@ -82,8 +119,9 @@ class TankDataPanel extends HTMLElement {
     if (t.status !== "loaded") return `<section><h2>Tank nicht geladen</h2><p>Für diesen Tank sind derzeit keine Buchungen möglich.</p><a href="/config/integrations/integration/ha_tankdata">Geräte & Dienste öffnen</a></section>`;
     return `<section class="stock-summary"><div class="tank-scene">${this.tankVisual(t)}</div><div class="stock-content"><p class="muted stock-label">Bestand</p><div class="stock">${number(t.stock)} <small>L</small><span class="stock-percent">${number(t.percent)} %</span></div><p class="muted">Kapazität ${number(t.capacity)} L · ${t.consumers.length} Verbraucher</p>${t.out_of_bounds ? '<p class="error">Bestand außerhalb der Tankgrenzen</p>' : ""}<div class="actions">${Object.entries(actions).map(([key,label]) => `<button class="${key === "record_refill" ? "primary" : ""}" data-book="${key}">${label}</button>`).join("")}</div></div></section>
       ${this.analysisView(t)}<section><div class="section-heading"><h2>Verbraucher</h2><button data-action="new-consumer">＋ Verbraucher hinzufügen</button></div>${t.consumers.length ? t.consumers.map(c => `<div class="consumer"><div><strong>${esc(c.name)}</strong><p class="muted">${esc(modes[c.config.mode])} · ${esc(this._hass.states[c.config.entity_id]?.attributes.friendly_name || c.config.entity_id)}${c.config.rate_lph && ["running","power"].includes(c.config.mode) ? ` · ${number(c.config.rate_lph,3)} L/h` : ""}</p></div><span class="badge ${c.valid ? "" : "warn"}">${c.running === true ? "An" : c.running === false ? "Aus" : "Unbekannt"}</span><button data-edit="${esc(c.id)}">Bearbeiten</button><button data-remove="${esc(c.id)}">Entfernen</button></div>`).join("") : '<p class="muted">Keine Verbraucher.</p>'}</section>
-      <section><div class="section-heading"><h2>Historie <small>${t.event_count} Ereignisse</small></h2><button data-action="history-refresh">Aktualisieren</button></div>${this.history.length ? `<div class="table-scroll"><table><thead><tr><th>Zeitpunkt</th><th>Ereignis</th><th>Menge / Bestand</th><th>Quelle</th><th>Details</th></tr></thead><tbody>${this.history.map(e => `<tr><td>${esc(new Date(e.at).toLocaleString("de-DE"))}</td><td>${esc(kinds[e.kind] || e.kind)}</td><td>${e.kind === "reset" ? "–" : `${number(e.liters,3)} L`}</td><td>${esc(t.consumers.find(c => c.id === e.source_id)?.name || (e.source_id ? "Früherer Verbraucher" : "Manuell"))}</td><td>${e.total_cost !== undefined ? `${number(e.total_cost,2)} €` : e.measurement ? `${number(e.measurement.value,2)} ${esc(e.measurement.unit)}` : "–"}</td></tr>`).join("")}</tbody></table></div>${this.before ? '<button data-action="more-history">Ältere laden</button>' : ""}` : '<p class="muted">Keine Buchungen.</p>'}</section>`;
+      ${this.historyView(t)}`;
   }
+
   tankVisual(t) {
     if (!t.settings) return "";
     // Orthographic isometric projection. Clip the physical solid at the
@@ -142,18 +180,64 @@ class TankDataPanel extends HTMLElement {
     const lines=outline.map(poly=>`<polyline points="${points(poly.length>2?[...poly,poly[0]]:poly)}" fill="none" stroke="#98c8c5" stroke-width="1.2" opacity=".6"/>`).join("");
     return `<svg class="tank-visual" viewBox="0 0 360 250" role="img" aria-label="${esc(shapes[shape])}, isometrisch: ${number(t.percent)} Prozent Volumen"><ellipse cx="180" cy="218" rx="116" ry="20" fill="#071c23" opacity=".15"/>${ordered.map(p=>polygon(p,"#a4d0d2",.055)).join("")}${fluid.map(p=>polygon(p,shade(p),.94)).join("")}${lines}${shape==="sphere"?'<circle cx="180" cy="115.2" r="74.46" fill="none" stroke="#98c8c5" stroke-width="1.4" opacity=".6"/>':""}</svg>`;
   }
+  async loadReport(selection) {
+    const tank = this.selected, request = (this.reportRequest || 0) + 1;
+    this.reportRequest = request;
+    this.reportLoading = true;
+    let report;
+    try { report = await this._hass.callWS({type:"ha_tankdata/manage",config_entry_id:tank,operation:"statistics",parameters:selection}); }
+    finally { if (this.reportRequest === request) this.reportLoading = false; }
+    if (this.selected !== tank || this.reportRequest !== request) return;
+    this.report = report;
+    this.reportTank = tank;
+    this.reportSelection = {...selection};
+    this.error = "";
+  }
+  async changeReportAnchor(input) {
+    if (!input.value || !input.checkValidity()) return;
+    const tank = this.tanks.find(t => t.id === this.selected);
+    const report = this.reportTank === tank.id ? this.report : tank.statistics;
+    const anchor = report.period === "month" ? `${input.value}-01` : report.period === "year" ? `${input.value}-01-01` : input.value;
+    input.blur();
+    try { await this.loadReport({period:report.period,anchor}); }
+    catch (e) { this.error = e.message || "Auswertung konnte nicht geladen werden."; }
+    this.render();
+  }
+  reportControls(r) {
+    if (r.period === "all") return `<p class="period-title">${esc(r.start.slice(0,4))}–${esc(r.end.slice(0,4))}</p>`;
+    const year = Number(r.anchor.slice(0,4));
+    let picker;
+    if (r.period === "year") {
+      const first = Math.min(year, Number(r.earliest.slice(0,4))), last = Math.max(year, Number(r.today.slice(0,4)));
+      picker = `<label>Jahr<select name="report-anchor">${Array.from({length:last-first+1},(_,i)=>last-i).map(y=>`<option ${y===year?"selected":""}>${y}</option>`).join("")}</select></label>`;
+    } else {
+      const month = r.period === "month";
+      picker = `<label>${month?"Monat":r.period==="week"?"Woche wählen":"Tag"}<input name="report-anchor" type="${month?"month":"date"}" value="${esc(month?r.anchor.slice(0,7):r.anchor)}" max="${month?r.today.slice(0,7):r.today}" required></label>`;
+    }
+    const date = value => new Date(`${value}T12:00:00Z`).toLocaleDateString("de-DE",{timeZone:"UTC"});
+    return `<div class="period-picker"><button data-action="period-previous" aria-label="Vorheriger Zeitraum">‹</button>${picker}<button data-action="period-next" aria-label="Nächster Zeitraum" ${r.end>=r.today?"disabled":""}>›</button><button data-action="period-current">${{day:"Heute",week:"Diese Woche",month:"Dieser Monat",year:"Dieses Jahr"}[r.period]}</button></div><p class="period-title">${r.period==="day"?date(r.start):`${date(r.start)} – ${date(r.end)}`}</p>`;
+  }
+  bucketLabel(d,r,long=false) {
+    const date = new Date(d.date.length===10 ? `${d.date}T12:00:00Z` : d.date);
+    const opts = {timeZone:r.granularity==="hour"?r.timezone:"UTC"};
+    if (r.granularity==="hour") return date.toLocaleTimeString("de-DE",{...opts,hour:"2-digit",minute:"2-digit",...(r.days.length!==24?{timeZoneName:"short"}:{})});
+    if (r.granularity==="year") return d.date.slice(0,4);
+    if (r.granularity==="month") return date.toLocaleDateString("de-DE",{...opts,month:long?"long":"short"});
+    return date.toLocaleDateString("de-DE",{...opts,...(r.period==="week"?{weekday:"short"}:{}),...((long||r.period!=="week")?{day:"2-digit"}:{}),...(long?{month:"2-digit"}:{})});
+  }
   analysisView(t) {
     const r=this.reportTank===t.id ? this.report : t.statistics, f=t.forecast;
     if (!r) return "";
     const max=Math.max(1,...r.days.map(d=>d.liters));
     const proposals=t.proposals.filter(p=>p.status==="pending");
     const content = `<section><div class="section-heading"><h2>Auswertung</h2><button data-action="settings">Einstellungen</button></div>
-      <div class="actions">${[1,7,30,365].map(d=>`<button data-days="${d}">${d===1?"Heute":`${d} Tage`}</button>`).join("")}</div>
-      <p class="muted">${esc(r.days[0].date)} bis ${esc(r.days.at(-1).date)}${t.consumers.length && r.days.some(d=>d.coverage===null||d.coverage<.99) ? ' · <span class="badge warn">Messdaten unvollständig</span>' : ""}</p>
-      <div class="metrics"><div><strong>${number(r.liters,2)} L</strong><span>Verbrauch</span></div><div><strong>${number(r.cost,2)} €</strong><span>Verbrauchskosten</span></div><div><strong>${number(r.runtime_hours,2)} h</strong><span>Laufzeit</span></div><div><strong>${number(r.inventory_value,2)} €</strong><span>Bestandswert</span></div></div>
-      <div class="chart" role="img" aria-label="Täglicher Verbrauch in Litern">${r.days.map(d=>`<div class="bar-slot" title="${esc(d.date)}: ${number(d.liters,2)} L; Datenabdeckung ${number(d.coverage===null?null:d.coverage*100)} %"><div class="bar" style="height:${Math.max(1,d.liters/max*120)}px;opacity:${d.coverage>=.99?1:.4}"></div></div>`).join("")}</div>
-      <p class="muted">Lieferkosten ${number(r.expenses,2)} € · Mischpreis ${number(r.unit_price,3)} €/L</p>
-      <details><summary>Tageswerte</summary><p class="muted">Blasse Balken kennzeichnen Datenlücken. Kosten ohne Preisangabe sind unbekannt.</p><div class="table-scroll"><table><thead><tr><th>Tag</th><th>Verbrauch</th><th>Kosten</th><th>Abdeckung</th></tr></thead><tbody>${r.days.map(d=>`<tr><td>${esc(d.date)}</td><td>${number(d.liters,2)} L</td><td>${number(d.cost,2)} €</td><td>${number(d.coverage===null?null:d.coverage*100)} %</td></tr>`).join("")}</tbody></table></div></details>
+      <div class="actions period-tabs">${[["day",r.period==="day"&&r.anchor!==r.today?"Tag":"Heute"],["week","Woche"],["month","Monat"],["year","Jahr"],["all","Gesamt"]].map(([p,label])=>`<button data-period="${p}" aria-pressed="${r.period===p}" class="${r.period===p?"primary":""}">${label}</button>`).join("")}</div>
+      ${this.reportControls(r)}
+      ${t.consumers.length && r.days.some(d=>!d.future&&(d.coverage===null||d.coverage<.99)) ? '<p><span class="badge warn">Messdaten unvollständig</span></p>' : ""}
+      <div class="metrics"><div><strong>${number(r.liters,2)} L</strong><span>Verbrauch</span></div><div><strong>${number(r.cost,2)} €</strong><span>Verbrauchskosten</span></div><div><strong>${number(r.runtime_hours,2)} h</strong><span>Laufzeit</span></div><div><strong>${number(r.inventory_value,2)} €</strong><span>Aktueller Bestandswert</span></div></div>
+      <div class="chart-scroll"><div class="calendar-chart ${r.days.length>12?"dense":r.days.length>7?"medium":""}" role="group" aria-label="${{hour:"Stündlicher",day:"Täglicher",month:"Monatlicher",year:"Jährlicher"}[r.granularity]} Verbrauch in Litern">${r.days.map((d,i)=>`<button class="calendar-slot" data-chart-index="${i}" title="${esc(this.bucketLabel(d,r,true))}: ${d.future?"Noch ausstehend":`${number(d.liters,2)} L; Datenabdeckung ${number(d.coverage===null?null:d.coverage*100)} %`}"><div class="bar-space">${d.future?"":`<div class="bar" style="height:${Math.max(1,d.liters/max*120)}px;opacity:${d.coverage>=.99?1:.4}"></div>`}</div><span>${esc(this.bucketLabel(d,r))}</span></button>`).join("")}</div><p class="chart-value muted" role="status" aria-live="polite"></p></div>
+      <p class="muted">Aktueller Mischpreis ${number(r.unit_price,3)} €/L</p>
+      <details><summary>${{hour:"Stundenwerte",day:"Tageswerte",month:"Monatswerte",year:"Jahreswerte"}[r.granularity]}</summary><p class="muted">Blasse Balken kennzeichnen Datenlücken. Kosten ohne Preisangabe sind unbekannt.</p><div class="table-scroll"><table><thead><tr><th>Zeitraum</th><th>Verbrauch</th><th>Laufzeit</th><th>Kosten</th><th>Abdeckung</th></tr></thead><tbody>${r.days.map(d=>`<tr><td>${esc(this.bucketLabel(d,r,true))}</td><td>${d.future?"–":`${number(d.liters,2)} L`}</td><td>${d.future?"–":`${number(d.runtime_hours,2)} h`}</td><td>${d.future?"–":`${number(d.cost,2)} €`}</td><td>${number(d.coverage===null?null:d.coverage*100)} %</td></tr>`).join("")}</tbody></table></div></details>
       <details><summary>Verbrauch je Gerät</summary>${Object.entries(r.by_source).map(([sid,value])=>`<p>${esc(t.consumers.find(c=>c.id===sid)?.name||"Früherer Verbraucher")}: ${number(value,2)} L</p>`).join("")||"Kein Verbrauch erfasst."}</details><h2 class="forecast-title">Prognose</h2>${f.available?`<div class="metrics"><div><strong>${number(f.next_7)} L</strong><span>Nächste 7 Tage</span></div><div><strong>${number(f.next_30)} L</strong><span>Nächste 30 Tage</span></div><div><strong>${esc(f.reserve_date||"–")}</strong><span>Reserve erreicht</span></div><div><strong>${esc(f.empty_date||"–")}</strong><span>Voraussichtlich leer</span></div></div><details><summary>Berechnungsgrundlage</summary><p class="muted">${esc(f.method)} ${f.sample_days} Messtage. Schwankungsbereich: ${number(f.low_30)}–${number(f.high_30)} L in 30 Tagen; keine garantierte Spanne.</p></details>`:`<p class="muted">${esc(f.reason)}</p>`}
       </section><section><h2>Kalibrierung</h2>
       ${proposals.length?proposals.map(p=>`<article class="proposal"><h3>${esc(t.consumers.find(c=>c.id===p.source_id)?.name||"Früherer Verbraucher")}</h3><p>Durchsatz ändern: <strong>${number(p.old_rate,3)} → ${number(p.new_rate,3)} L/h</strong></p><p class="muted">${number(p.evidence.measured_liters)} L gemessener Verbrauch bei ${number(p.evidence.runtime_hours,2)} h Laufzeit. ${esc(new Date(p.evidence.start).toLocaleDateString("de-DE"))}–${esc(new Date(p.evidence.end).toLocaleDateString("de-DE"))}</p><div class="actions">${[["accept","Wert übernehmen"],["reject","Ablehnen"],["later","Später"]].map(([k,v])=>`<button data-decision="${k}" data-proposal="${esc(p.id)}">${v}</button>`).join("")}</div></article>`).join(""):'<p>Keine offenen Vorschläge.</p>'}
@@ -167,15 +251,28 @@ class TankDataPanel extends HTMLElement {
     if (!button || this.busy) return;
     const action = button.dataset.action;
     try {
-      if (button.dataset.tank) { this.selected = button.dataset.tank; this.olderHistory = false; await this.loadHistory(); this.render(); }
+      if (button.dataset.tank) { this.selected = button.dataset.tank; this.history = []; this.historyCount = 0; this.reportTank = null; this.reportRequest = (this.reportRequest || 0) + 1; this.olderHistory = false; await this.loadHistory(); this.render(); }
+      else if (button.dataset.chartIndex !== undefined) { this.shadowRoot.querySelector(".chart-value").textContent = button.title; }
       else if (button.dataset.decision) {
         await this._hass.callWS({type:"ha_tankdata/manage",config_entry_id:this.selected,operation:"decide",parameters:{proposal_id:button.dataset.proposal,decision:button.dataset.decision}});
         this.notice = button.dataset.decision === "accept" ? "Durchsatz übernommen." : button.dataset.decision === "later" ? "Vorschlag zurückgestellt." : "Vorschlag abgelehnt.";
         await this.refresh();
       }
-      else if (button.dataset.days) {
-        this.report = await this._hass.callWS({type:"ha_tankdata/manage",config_entry_id:this.selected,operation:"statistics",parameters:{days:Number(button.dataset.days)}});
-        this.reportTank = this.selected; this.render();
+      else if (button.dataset.period || action?.startsWith("period-")) {
+        const tank = this.tanks.find(t=>t.id===this.selected);
+        const r = this.reportTank===tank.id ? this.report : tank.statistics;
+        const period = button.dataset.period || r.period;
+        let anchor = r.anchor;
+        if (action === "period-current" || button.dataset.period === "day") anchor = null;
+        else if (action === "period-previous" || action === "period-next") {
+          const delta = action === "period-next" ? 1 : -1;
+          const date = new Date(`${r.start}T12:00:00Z`);
+          if (period === "day" || period === "week") date.setUTCDate(date.getUTCDate()+delta*(period==="week"?7:1));
+          else if (period === "month") date.setUTCMonth(date.getUTCMonth()+delta);
+          else date.setUTCFullYear(date.getUTCFullYear()+delta);
+          anchor = date.toISOString().slice(0,10);
+        }
+        await this.loadReport({period,...(anchor?{anchor}:{})}); this.render();
       }
       else if (action === "settings") this.openDialog("settings");
       else if (button.dataset.book) this.openDialog("book",button.dataset.book);
@@ -226,12 +323,19 @@ class TankDataPanel extends HTMLElement {
       fields = (notes[key] && !["record_refill","apply_correction"].includes(key) ? `<p>${esc(notes[key])}</p>` : "") + (["recalculate","reset_calibration"].includes(key) ? "" : this.input("liters",["apply_correction","record_observation"].includes(key) ? "Neuer Bestand (L)" : "Befüllmenge (L)","number","","min=0 step=any"));
     }
     if (kind === "book" && key === "record_refill") fields += '<label>Gesamtpreis der Lieferung (EUR, optional)<input name="total_cost" type="number" min="0" step="any"></label>';
-    if (kind === "book" && key === "record_observation") fields += '<label>Messeinheit<select name="unit"><option value="L">Liter</option><option value="%">Prozent des Volumens</option><option value="cm">Füllhöhe in cm</option></select></label>';
+    if (kind === "book" && ["apply_correction","record_observation"].includes(key)) fields += `<label>Messeinheit<select name="unit"><option value="L">Liter</option><option value="%">Prozent des Volumens</option>${key === "record_observation" ? '<option value="cm">Füllhöhe in cm</option>' : ""}</select></label>`;
     this.shadowRoot.getElementById("dialog-host").innerHTML = `<dialog aria-labelledby="dialog-title"><form><h2 id="dialog-title">${esc(title)}</h2><p class="muted">${esc(kind === "tank" ? "" : tank.name)}</p>${fields}<p class="error" id="form-error" role="alert"></p><div class="dialog-actions"><button type="button" data-action="close">Abbrechen</button><button type="submit" class="primary">${kind === "book" ? esc(actions[key]) : kind === "remove" ? "Entfernen" : "Speichern"}</button></div></form></dialog>`;
     const dialog = this.shadowRoot.querySelector("dialog");
     dialog.addEventListener("cancel",e => { e.preventDefault(); if (!this.busy) this.closeDialog(); });
     dialog.showModal();
     if (kind === "consumer") this.consumerFields(this.shadowRoot.querySelector('[name="mode"]').value);
+    if (kind === "book" && ["apply_correction","record_observation"].includes(key)) this.measurementFields("L");
+  }
+  measurementFields(unit) {
+    const input = this.shadowRoot.querySelector('[name="liters"]');
+    const tank = this.tanks.find(t => t.id === this.modal.tank);
+    input.parentElement.firstChild.textContent = `Neuer Bestand (${unit})`;
+    input.max = unit === "%" ? 100 : unit === "cm" ? (tank.settings.geometry.height_cm ?? "") : tank.capacity;
   }
   consumerFields(mode) {
     for (const [id,show] of [["rate-fields",["power","running"].includes(mode)],["power-fields",mode === "power"]]) {
@@ -242,8 +346,11 @@ class TankDataPanel extends HTMLElement {
   }
   closeDialog() {
     if (this.flow) this._hass.callApi("DELETE",`${this.flow.path}/${this.flow.id}`).catch(() => {});
+    this.shadowRoot.querySelector("dialog")?.close();
+    this.shadowRoot.getElementById("dialog-host").replaceChildren();
     this.modal = null;
     this.flow = null;
+    this.pendingBooking = null;
     this.render();
   }
   async submit(event) {
@@ -301,7 +408,8 @@ class TankDataPanel extends HTMLElement {
         this.flow = null;
         if (kind === "tank") this.selected = result.result.entry_id;
       }
-      this.modal = null;
+      this.flow = null;
+      this.closeDialog();
       this.olderHistory = false;
       this.notice = "Gespeichert.";
       await this.refresh();
@@ -309,7 +417,7 @@ class TankDataPanel extends HTMLElement {
     } catch (e) {
       this.shadowRoot.getElementById("form-error").textContent = e.message || "Speichern fehlgeschlagen. Bitte Verbindung und Eingaben prüfen.";
       if (this.pendingBooking) {
-        form.querySelectorAll("input").forEach(input => input.disabled = true);
+        form.querySelectorAll("input, select").forEach(input => input.disabled = true);
         form.querySelector('button[type="submit"]').textContent = "Dieselbe Buchung erneut versuchen";
       }
     } finally {
@@ -318,7 +426,8 @@ class TankDataPanel extends HTMLElement {
     }
   }
   styles() { return `
-    .tank-visual{height:210px;width:100%;color:#7aa8a3}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:20px;margin:24px 0}.metrics strong{display:block;font-size:24px}.metrics span{display:block;font-size:13px;margin-top:6px;color:var(--secondary-text-color)}.chart{display:flex;align-items:flex-end;gap:2px;height:130px;border-bottom:1px solid #8885}.bar-slot{flex:1;min-width:0}.bar{background:#16877c;border-radius:2px 2px 0 0}.forecast-title{margin-top:30px}.proposal{border:1px solid #16877c;padding:18px;border-radius:12px;margin:16px 0}textarea{width:100%;font:inherit;padding:10px;background:var(--primary-background-color);color:inherit}.stock-summary{display:grid;grid-template-columns:minmax(220px,1fr) 1.3fr;align-items:center;gap:28px;margin-top:24px}.tank-scene{text-align:center}.tank-scene .tank-visual{height:250px;max-width:390px}.stock-content .badge{float:right}.stock-label{margin:0 0 8px}.stock-content .actions{margin-top:24px}.stock-percent{font-size:22px;font-weight:500;color:var(--secondary-text-color);margin-left:18px;letter-spacing:0}.ha-device{display:inline-block;border:1px solid var(--divider-color);border-radius:9px;padding:12px 16px;white-space:nowrap}.heading h1{margin-bottom:0}.heading p.muted{margin-bottom:0}.calibration-history{margin-bottom:22px}.back{margin:0 0 12px!important}@media(max-width:700px){.stock-summary{grid-template-columns:1fr;gap:8px}.tank-scene .tank-visual{height:205px}.stock-content{padding:0 4px 6px}.stock-content .actions button{flex:1}.ha-device{margin-top:8px}}:host{display:block;height:100%;overflow:auto;background:var(--primary-background-color,#f5f7fa);color:var(--primary-text-color,#192a35);font-family:var(--paper-font-body1_-_font-family,system-ui)}*{box-sizing:border-box}header{height:64px;padding:0 28px;display:flex;align-items:center;gap:16px;background:var(--card-background-color,#fff);border-bottom:1px solid var(--divider-color,#e1e7ed)}header a{margin-left:auto}.brand{font-weight:750;font-size:21px}.version{font-size:12px;color:var(--secondary-text-color,#64748b)}main{max-width:1240px;margin:auto;padding:36px 28px}h1{font-size:34px;margin:4px 0 8px;letter-spacing:-1px}h2{font-size:19px;margin:0 0 16px}small{font-size:.6em;font-weight:500}.heading,.section-heading{display:flex;align-items:center;justify-content:space-between;gap:20px}.eyebrow{font-size:11px;letter-spacing:2px;color:#16877c;font-weight:750}.muted,footer{color:var(--secondary-text-color,#64748b);font-size:14px;line-height:1.6}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:22px;margin-top:30px}.detail-grid{display:grid;grid-template-columns:1fr 1.5fr;gap:22px}.tank-card,section{background:var(--card-background-color,#fff);border:1px solid var(--divider-color,#e1e7ed);border-radius:18px;padding:26px;margin-bottom:22px}.tank-card{text-align:left;width:100%;color:inherit;font:inherit;cursor:pointer}.tank-card:hover{border-color:#16877c}.card-top,.card-bottom{display:flex;justify-content:space-between;align-items:center;gap:12px}.card-top{margin-bottom:20px}.card-bottom{font-size:13px;color:var(--secondary-text-color,#64748b)}.tank-icon{color:#16877c;font-size:30px}.badge{border-radius:20px;background:#16877c18;color:var(--primary-text-color,#126f65);padding:6px 10px;font-size:12px;white-space:nowrap}.warn{background:#e5a42822;color:var(--warning-color,#996d0b)}.stock{font-size:42px;font-weight:700;letter-spacing:-1px}.meter{height:10px;background:var(--divider-color,#e9eef2);border-radius:8px;margin:22px 0 12px;overflow:hidden}.meter span{display:block;height:100%;background:#16877c;border-radius:8px}button{border:1px solid var(--divider-color,#d5dee7);border-radius:9px;background:var(--card-background-color,#fff);color:inherit;padding:11px 15px;font:inherit;font-size:14px;cursor:pointer}button:hover{filter:brightness(.97)}button:focus-visible,a:focus-visible{outline:3px solid #16877c;outline-offset:3px}button:disabled{opacity:.6;cursor:wait}.primary{background:#137e73;color:white;border-color:#137e73;font-weight:600}.brand-icon{width:36px;height:36px;object-fit:contain}.actions{display:flex;gap:10px;flex-wrap:wrap}.device-link{display:inline-block;margin-top:24px}a{color:var(--primary-color,#137e73);font-size:14px;text-decoration:none}.back{margin:8px 0 22px;border:0;background:none;padding-left:0}.consumer{display:flex;align-items:center;gap:12px;padding:18px 0;border-top:1px solid var(--divider-color,#e1e7ed)}.consumer>div{flex:1;min-width:0}.consumer p{margin:6px 0;overflow-wrap:anywhere}.table-scroll{overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px;text-align:left}th{color:var(--secondary-text-color,#64748b);font-size:12px}td,th{padding:14px 10px;border-bottom:1px solid var(--divider-color,#e1e7ed);white-space:nowrap}.error{color:var(--error-color,#b3261e);line-height:1.5}.notice{background:#16877c18;padding:14px;border-radius:10px}.empty{text-align:center;margin-top:30px;padding:60px 20px}footer{margin:32px 0;font-size:12px}dialog{background:var(--card-background-color,#fff);color:inherit;border:0;border-radius:18px;padding:28px;width:min(540px,calc(100% - 24px));max-height:90vh;overflow:auto;box-shadow:0 20px 80px #0005}dialog::backdrop{background:#0007}label{display:block;font-size:14px;margin:18px 0}input,select{display:block;width:100%;margin-top:7px;padding:12px;border:1px solid var(--divider-color,#c6d0d9);border-radius:8px;background:var(--primary-background-color,#fff);color:inherit;font:inherit}.dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:25px}summary{cursor:pointer;font-size:14px;padding:14px 0}[hidden]{display:none!important}@media(max-width:700px){header{padding:0 12px}main{padding:22px 16px}h1{font-size:28px}.heading{align-items:flex-start;flex-direction:column;gap:8px}.detail-grid{grid-template-columns:1fr}.consumer{flex-wrap:wrap}.consumer>div{flex-basis:100%}section,.tank-card{padding:20px}.section-heading{align-items:flex-start;flex-wrap:wrap}.stock{font-size:36px}}
+    .period-picker{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin-top:18px}.period-picker label{margin:0}.period-picker input,.period-picker select{margin-top:5px}.period-title{font-weight:600}.chart-scroll{container-type:inline-size;width:100%;min-width:0}.calendar-chart{display:flex;gap:clamp(1px,.4vw,6px);width:100%;padding-bottom:32px}.calendar-slot{position:relative;flex:1 1 0;min-width:0;width:0;border:0;border-radius:0;padding:0;background:transparent;font-size:11px}.calendar-slot span{position:absolute;top:133px;left:50%;transform:translateX(-50%);white-space:nowrap;pointer-events:none}.calendar-slot:first-child span{left:0;transform:none}.calendar-slot:last-child span{left:auto;right:0;transform:none}.chart-value{min-height:20px;margin:4px 0;overflow-wrap:anywhere}@container(max-width:650px){.calendar-chart.dense .calendar-slot span{visibility:hidden}.calendar-chart.dense .calendar-slot:nth-child(4n+1) span,.calendar-chart.dense .calendar-slot:last-child span{visibility:visible}.calendar-chart.medium .calendar-slot:nth-child(even):not(:last-child) span{visibility:hidden}}@container(max-width:350px){.calendar-chart{gap:2px}.calendar-slot{font-size:9px}.calendar-chart.dense .calendar-slot:nth-last-child(2) span,.calendar-chart.dense .calendar-slot:nth-last-child(3) span{visibility:hidden}}.bar-space{height:125px;display:flex;align-items:end;border-bottom:1px solid #8885}.bar-space .bar{width:100%}.period-tabs{margin-bottom:12px}
+    .tank-visual{height:210px;width:100%;color:#7aa8a3}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:20px;margin:24px 0}.metrics strong{display:block;font-size:24px}.metrics span{display:block;font-size:13px;margin-top:6px;color:var(--secondary-text-color)}.chart{display:flex;align-items:flex-end;gap:2px;height:130px;border-bottom:1px solid #8885}.bar-slot{flex:1;min-width:0}.bar{background:#16877c;border-radius:2px 2px 0 0}.forecast-title{margin-top:30px}.proposal{border:1px solid #16877c;padding:18px;border-radius:12px;margin:16px 0}textarea{width:100%;font:inherit;padding:10px;background:var(--primary-background-color);color:inherit}.stock-summary{display:grid;grid-template-columns:minmax(220px,1fr) 1.3fr;align-items:center;gap:28px;margin-top:24px}.tank-scene{text-align:center}.tank-scene .tank-visual{height:250px;max-width:390px}.stock-content .badge{float:right}.stock-label{margin:0 0 8px}.stock-content .actions{margin-top:24px}.stock-percent{font-size:22px;font-weight:500;color:var(--secondary-text-color);margin-left:18px;letter-spacing:0}.ha-device{display:inline-block;border:1px solid var(--divider-color);border-radius:9px;padding:12px 16px;white-space:nowrap}.heading h1{margin-bottom:0}.heading p.muted{margin-bottom:0}.calibration-history{margin-bottom:22px}.back{margin:0 0 12px!important}@media(max-width:700px){.stock-summary{grid-template-columns:1fr;gap:8px}.tank-scene .tank-visual{height:205px}.stock-content{padding:0 4px 6px}.stock-content .actions button{flex:1}.ha-device{margin-top:8px}}:host{display:block;height:calc(100dvh - var(--safe-area-inset-top,0px) - var(--safe-area-inset-bottom,0px));overflow:hidden;background:var(--primary-background-color,#f5f7fa);color:var(--primary-text-color,#192a35);font-family:var(--paper-font-body1_-_font-family,system-ui)}*{box-sizing:border-box}ha-top-app-bar-fixed{height:100%}.integration-link{color:var(--app-header-text-color);padding:12px 8px}main{max-width:1240px;margin:auto;padding:36px 28px}h1{font-size:34px;margin:4px 0 8px;letter-spacing:-1px}h2{font-size:19px;margin:0 0 16px}small{font-size:.6em;font-weight:500}.heading,.section-heading{display:flex;align-items:center;justify-content:space-between;gap:20px}.eyebrow{font-size:11px;letter-spacing:2px;color:#16877c;font-weight:750}.muted,footer{color:var(--secondary-text-color,#64748b);font-size:14px;line-height:1.6}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:22px;margin-top:30px}.detail-grid{display:grid;grid-template-columns:1fr 1.5fr;gap:22px}.tank-card,section{background:var(--card-background-color,#fff);border:1px solid var(--divider-color,#e1e7ed);border-radius:18px;padding:26px;margin-bottom:22px}.tank-card{text-align:left;width:100%;color:inherit;font:inherit;cursor:pointer}.tank-card:hover{border-color:#16877c}.card-top,.card-bottom{display:flex;justify-content:space-between;align-items:center;gap:12px}.card-top{margin-bottom:20px}.card-bottom{font-size:13px;color:var(--secondary-text-color,#64748b)}.tank-icon{color:#16877c;font-size:30px}.badge{border-radius:20px;background:#16877c18;color:var(--primary-text-color,#126f65);padding:6px 10px;font-size:12px;white-space:nowrap}.warn{background:#e5a42822;color:var(--warning-color,#996d0b)}.stock{font-size:42px;font-weight:700;letter-spacing:-1px}.meter{height:10px;background:var(--divider-color,#e9eef2);border-radius:8px;margin:22px 0 12px;overflow:hidden}.meter span{display:block;height:100%;background:#16877c;border-radius:8px}button{border:1px solid var(--divider-color,#d5dee7);border-radius:9px;background:var(--card-background-color,#fff);color:inherit;padding:11px 15px;font:inherit;font-size:14px;cursor:pointer}button:hover{filter:brightness(.97)}button:focus-visible,a:focus-visible{outline:3px solid #16877c;outline-offset:3px}button:disabled{opacity:.6;cursor:wait}.primary{background:#137e73;color:white;border-color:#137e73;font-weight:600}.actions{display:flex;gap:10px;flex-wrap:wrap}.device-link{display:inline-block;margin-top:24px}a{color:var(--primary-color,#137e73);font-size:14px;text-decoration:none}.back{margin:8px 0 22px;border:0;background:none;padding-left:0}.consumer{display:flex;align-items:center;gap:12px;padding:18px 0;border-top:1px solid var(--divider-color,#e1e7ed)}.consumer>div{flex:1;min-width:0}.consumer p{margin:6px 0;overflow-wrap:anywhere}.table-scroll{overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px;text-align:left}th{color:var(--secondary-text-color,#64748b);font-size:12px}td,th{padding:14px 10px;border-bottom:1px solid var(--divider-color,#e1e7ed);white-space:nowrap}.error{color:var(--error-color,#b3261e);line-height:1.5}.notice{background:#16877c18;padding:14px;border-radius:10px}.empty{text-align:center;margin-top:30px;padding:60px 20px}footer{margin:32px 0;font-size:12px}dialog{background:var(--card-background-color,#fff);color:inherit;border:0;border-radius:18px;padding:28px;width:min(540px,calc(100% - 24px));max-height:90vh;overflow:auto;box-shadow:0 20px 80px #0005}dialog::backdrop{background:#0007}label{display:block;font-size:14px;margin:18px 0}input,select{display:block;width:100%;margin-top:7px;padding:12px;border:1px solid var(--divider-color,#c6d0d9);border-radius:8px;background:var(--primary-background-color,#fff);color:inherit;font:inherit}.dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:25px}summary{cursor:pointer;font-size:14px;padding:14px 0}[hidden]{display:none!important}@media(max-width:700px){main{padding:22px 16px}h1{font-size:28px}.heading{align-items:flex-start;flex-direction:column;gap:8px}.detail-grid{grid-template-columns:1fr}.consumer{flex-wrap:wrap}.consumer>div{flex-basis:100%}section,.tank-card{padding:20px}.section-heading{align-items:flex-start;flex-wrap:wrap}.stock{font-size:36px}}
   `; }
 }
 if (!customElements.get("tankdata-panel")) customElements.define("tankdata-panel", TankDataPanel);

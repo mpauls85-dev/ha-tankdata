@@ -18,6 +18,7 @@ from .configuration import consumers
 from .consumption import calculate, validate_config
 from .geometry import to_liters
 from .model import append, replay, timestamp
+from .segments import append_consumption
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -111,7 +112,7 @@ class TankRuntime:
         if interval:
             add_coverage(candidate, source_id, interval)
         if interval and interval["liters"] > 0:
-            candidate = append(
+            candidate = append_consumption(
                 candidate,
                 {
                     "id": f"{source_id}:{at}",
@@ -120,7 +121,6 @@ class TankRuntime:
                     "source_id": source_id,
                     **interval,
                 },
-                manual=False,
             )
         return candidate
 
@@ -138,7 +138,7 @@ class TankRuntime:
                 "kind": kind,
                 "liters": liters,
             }
-            if kind == "observation":
+            if kind in {"observation", "correction"}:
                 event["liters"] = to_liters(
                     liters,
                     unit,

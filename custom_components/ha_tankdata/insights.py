@@ -71,23 +71,104 @@ def coverage(intervals, start, end, source_id):
 
 
 def summarize(data, configs, now, days=30, tz="UTC", source_id=None):
+    """Rolling daily window retained for forecasts and existing callers."""
     zone = ZoneInfo(tz)
     today = now.astimezone(zone).date()
-    start_day = today - timedelta(days=days - 1)
-    start = datetime.combine(start_day, datetime.min.time(), zone)
-    previous_start = start - timedelta(days=days)
+    start = datetime.combine(
+        today - timedelta(days=days - 1), datetime.min.time(), zone
+    )
+    boundaries = [start + timedelta(days=i) for i in range(days + 1)]
+    return _summarize_ranges(
+        data, configs, now, boundaries, source_id, start - timedelta(days=days)
+    )
+
+
+def calendar_summary(
+    data, configs, now, period="day", anchor=None, tz="UTC", source_id=None
+):
+    """Calendar buckets, with elapsed time measured in UTC even across DST."""
+    if period not in {"day", "week", "month", "year", "all"}:
+        raise ValueError("Ungültiger Zeitraum")
+    zone = ZoneInfo(tz)
+    today = now.astimezone(zone).date()
+    day = datetime.strptime(anchor, "%Y-%m-%d").date() if anchor else today
+    if anchor and day.isoformat() != anchor:
+        raise ValueError("Ungültiges Datum")
+    if not 2 <= day.year <= 9998:
+        raise ValueError("Ungültiges Jahr")
+    earliest = min(
+        [today]
+        + [
+            timestamp(e.get("start", e["at"])).astimezone(zone).date()
+            for e in data["events"]
+        ]
+        + [
+            timestamp(i["start"]).astimezone(zone).date()
+            for i in data["analysis"]["intervals"]
+        ]
+    )
+    start = datetime.combine(day, datetime.min.time(), zone)
+    if period == "day":
+        end = (start + timedelta(days=1)).astimezone(timezone.utc)
+        cursor = start.astimezone(timezone.utc)
+        boundaries = [cursor]
+        while cursor < end:
+            cursor = min(end, cursor + timedelta(hours=1))
+            boundaries.append(cursor)
+        granularity = "hour"
+    elif period == "week":
+        start -= timedelta(days=day.weekday())
+        boundaries = [start + timedelta(days=i) for i in range(8)]
+        granularity = "day"
+    elif period == "month":
+        start = start.replace(day=1)
+        end = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        boundaries = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+        granularity = "day"
+    elif period == "year":
+        boundaries = [start.replace(month=m, day=1) for m in range(1, 13)]
+        boundaries.append(start.replace(year=day.year + 1, month=1, day=1))
+        granularity = "month"
+    else:
+        boundaries = [
+            datetime(y, 1, 1, tzinfo=zone) for y in range(earliest.year, today.year + 2)
+        ]
+        granularity = "year"
+    report = _summarize_ranges(data, configs, now, boundaries, source_id)
+    for bucket, boundary in zip(report["days"], boundaries, strict=False):
+        local = boundary.astimezone(zone)
+        bucket["date"] = (
+            local.isoformat() if period == "day" else local.date().isoformat()
+        )
+    report.update(
+        period=period,
+        granularity=granularity,
+        anchor=day.isoformat(),
+        today=today.isoformat(),
+        earliest=earliest.isoformat(),
+        start=boundaries[0].astimezone(zone).date().isoformat(),
+        end=(boundaries[-1].astimezone(zone).date() - timedelta(days=1)).isoformat(),
+        timezone=tz,
+    )
+    return report
+
+
+def _summarize_ranges(data, configs, now, boundaries, source_id, previous_start=None):
     cost_data = costs(data)
-    buckets = {}
-    for index in range(days):
-        day = start_day + timedelta(days=index)
-        buckets[day.isoformat()] = {
-            "date": day.isoformat(),
+    edges = [b.astimezone(timezone.utc) for b in boundaries]
+    now = now.astimezone(timezone.utc)
+    buckets = [
+        {
+            "date": b.date().isoformat(),
             "liters": 0.0,
             "runtime_hours": 0.0,
             "cost": 0.0,
             "cost_complete": True,
             "coverage": None,
+            "future": edges[i] >= now,
         }
+        for i, b in enumerate(boundaries[:-1])
+    ]
     previous = 0.0
     per_source = {}
     for event in data["events"]:
@@ -99,48 +180,46 @@ def summarize(data, configs, now, days=30, tz="UTC", source_id=None):
             timestamp(event.get("start", event["at"])),
             timestamp(event.get("end", event["at"])),
         )
-        if right == left:
-            left = right - timedelta(microseconds=1)
+        # Events without a timed interval belong to their actual booking instant.
+        instant = right == left
         total_seconds = (right - left).total_seconds()
-        prior = (
-            max(0, (min(right, start) - max(left, previous_start)).total_seconds())
-            / total_seconds
-        )
-        previous += event["liters"] * prior
-        cursor, finish = max(left, start), min(right, now)
-        while cursor < finish:
-            date = cursor.astimezone(zone).date()
-            midnight = datetime.combine(
-                date + timedelta(days=1), datetime.min.time(), zone
-            ).astimezone(timezone.utc)
-            stop = min(finish, midnight)
-            part = (stop - cursor).total_seconds() / total_seconds
-            bucket = buckets.get(date.isoformat())
-            if bucket:
-                liters = event["liters"] * part
-                bucket["liters"] += liters
-                bucket["runtime_hours"] += event.get("runtime_seconds", 0) * part / 3600
-                cost = cost_data["consumption"].get(event["id"])
-                if cost is None and liters:
-                    bucket["cost_complete"] = False
-                else:
-                    bucket["cost"] += (cost or 0) * part
-                sid = event.get("source_id", "unknown")
-                per_source[sid] = per_source.get(sid, 0) + liters
-            cursor = stop
+        if previous_start is not None:
+            if instant:
+                prior = float(previous_start <= right < edges[0])
+            else:
+                prior = (
+                    max(
+                        0,
+                        (
+                            min(right, edges[0])
+                            - max(left, previous_start.astimezone(timezone.utc))
+                        ).total_seconds(),
+                    )
+                    / total_seconds
+                )
+            previous += event["liters"] * prior
+        for index, bucket in enumerate(buckets):
+            begin, end = edges[index], min(edges[index + 1], now)
+            if instant:
+                part = float(begin <= right < edges[index + 1] and right <= now)
+            else:
+                part = max(0, (min(right, end) - max(left, begin)).total_seconds())
+                part /= total_seconds
+            if not part:
+                continue
+            liters = event["liters"] * part
+            bucket["liters"] += liters
+            bucket["runtime_hours"] += event.get("runtime_seconds", 0) * part / 3600
+            cost = cost_data["consumption"].get(event["id"])
+            if cost is None and liters:
+                bucket["cost_complete"] = False
+            else:
+                bucket["cost"] += (cost or 0) * part
+            sid = event.get("source_id", "unknown")
+            per_source[sid] = per_source.get(sid, 0) + liters
     sources = [source_id] if source_id else list(configs)
-    for bucket in buckets.values():
-        left = datetime.combine(
-            datetime.fromisoformat(bucket["date"]).date(), datetime.min.time(), zone
-        ).astimezone(timezone.utc)
-        right = min(
-            now,
-            datetime.combine(
-                left.astimezone(zone).date() + timedelta(days=1),
-                datetime.min.time(),
-                zone,
-            ).astimezone(timezone.utc),
-        )
+    for index, bucket in enumerate(buckets):
+        left, right = edges[index], min(now, edges[index + 1])
         if sources and right > left:
             bucket["coverage"] = min(
                 coverage(data["analysis"]["intervals"], left, right, sid)[0]
@@ -148,18 +227,19 @@ def summarize(data, configs, now, days=30, tz="UTC", source_id=None):
             )
         if not bucket["cost_complete"]:
             bucket["cost"] = None
-    daily = list(buckets.values())
     expenses = [
-        e["cost"] for e in cost_data["expenses"] if start <= timestamp(e["at"]) <= now
+        e["cost"]
+        for e in cost_data["expenses"]
+        if edges[0] <= timestamp(e["at"]) < edges[-1] and timestamp(e["at"]) <= now
     ]
     return {
-        "days": daily,
-        "liters": sum(b["liters"] for b in daily),
+        "days": buckets,
+        "liters": sum(b["liters"] for b in buckets),
         "previous_liters": previous,
-        "runtime_hours": sum(b["runtime_hours"] for b in daily),
+        "runtime_hours": sum(b["runtime_hours"] for b in buckets),
         "by_source": per_source,
-        "cost": sum(b["cost"] for b in daily)
-        if all(b["cost"] is not None for b in daily)
+        "cost": sum(b["cost"] for b in buckets)
+        if all(b["cost"] is not None for b in buckets)
         else None,
         "expenses": sum(expenses) if all(v is not None for v in expenses) else None,
         "inventory_value": cost_data["inventory_value"],

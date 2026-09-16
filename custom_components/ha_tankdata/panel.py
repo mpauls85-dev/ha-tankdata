@@ -14,7 +14,8 @@ from homeassistant.util import dt as dt_util
 from .configuration import consumers, is_consumer
 from .const import DOMAIN, VERSION
 from .geometry import fill_height
-from .insights import forecast, summarize
+from .history import history_page
+from .insights import calendar_summary, forecast, summarize
 from .model import replay
 
 PANEL_PATH = "tankdata"
@@ -90,7 +91,7 @@ def get_tanks(hass, connection, msg):
             tank["forecast"] = forecast(
                 runtime.data, runtime.configs(), dt_util.utcnow(), hass.config.time_zone
             )
-            tank["statistics"] = summarize(
+            tank["statistics"] = calendar_summary(
                 runtime.data,
                 runtime.configs(),
                 dt_util.utcnow(),
@@ -119,6 +120,8 @@ def get_tanks(hass, connection, msg):
         vol.Required("config_entry_id"): str,
         vol.Optional("before"): vol.All(int, vol.Range(min=0)),
         vol.Optional("limit", default=50): vol.All(int, vol.Range(min=1, max=200)),
+        vol.Optional("grouped", default=False): bool,
+        vol.Optional("run_id"): str,
     }
 )
 @websocket_api.require_admin
@@ -133,7 +136,22 @@ def get_history(hass, connection, msg):
     ):
         connection.send_error(msg["id"], "not_loaded", "Tank is not loaded")
         return
-    events = entry.runtime_data.data["events"]
+    runtime = entry.runtime_data
+    if msg.get("grouped") or "run_id" in msg:
+        try:
+            result = history_page(
+                runtime.data,
+                {sid: runtime.source_running(sid) for sid in runtime.configs()},
+                runtime.configs(),
+                limit=msg["limit"],
+                before=msg.get("before"),
+                run_id=msg.get("run_id"),
+            )
+            connection.send_result(msg["id"], result)
+        except ValueError as error:
+            connection.send_error(msg["id"], "invalid_request", str(error))
+        return
+    events = runtime.data["events"]
     end = min(msg.get("before", len(events)), len(events))
     start = max(0, end - msg["limit"])
     connection.send_result(
@@ -198,14 +216,27 @@ async def manage(hass, connection, msg):
                 and sid not in runtime.configs()
             ):
                 raise ValueError("Ungültiger Zeitraum oder Verbraucher")
-            result = summarize(
-                runtime.data,
-                runtime.configs(),
-                dt_util.utcnow(),
-                days,
-                hass.config.time_zone,
-                sid,
-            )
+            if "period" in params:
+                if set(params) - {"period", "anchor", "source_id"}:
+                    raise ValueError("Ungültige Statistikparameter")
+                result = calendar_summary(
+                    runtime.data,
+                    runtime.configs(),
+                    dt_util.utcnow(),
+                    params["period"],
+                    params.get("anchor"),
+                    hass.config.time_zone,
+                    sid,
+                )
+            else:
+                result = summarize(
+                    runtime.data,
+                    runtime.configs(),
+                    dt_util.utcnow(),
+                    days,
+                    hass.config.time_zone,
+                    sid,
+                )
         connection.send_result(msg["id"], result)
     except (ValueError, TypeError, KeyError) as error:
         connection.send_error(msg["id"], "invalid_request", str(error))

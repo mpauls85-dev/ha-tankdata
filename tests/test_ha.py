@@ -89,7 +89,7 @@ async def test_invalid_config_and_disk_reload(hass):
     data = await TankStore(hass, entry.entry_id).load()
     assert data == entry.runtime_data.data
     raw = json.loads(Path(entry.runtime_data.store.store.path).read_text())
-    assert raw["version"] == 2
+    assert raw["version"] == 3
 
 
 async def add_consumer(hass, entry, data=None):

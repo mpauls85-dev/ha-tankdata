@@ -148,7 +148,25 @@ def validate_interval(event):
     if event["kind"] != "consumption" or not isinstance(event["source_id"], str):
         raise ValueError("Invalid calculated event")
     seconds = (timestamp(event["end"]) - timestamp(event["start"])).total_seconds()
-    if not 0 < seconds <= config["max_gap_seconds"]:
+    if event.get("segment") is not None:
+        if (
+            event["segment"] is not True
+            or config["mode"] not in {"running", "power"}
+            or type(event.get("steps")) is not int
+            or event["steps"] < 1
+            or event["input_before"] != config["rate_lph"]
+            or event["input_after"] not in {0, config["rate_lph"]}
+        ):
+            raise ValueError("Invalid constant-rate segment")
+        maximum = number(event["max_step_seconds"], positive=True)
+        if (
+            maximum > config["max_gap_seconds"]
+            or seconds > maximum * event["steps"] + 1e-6
+        ):
+            raise ValueError("Invalid segment coverage")
+    elif seconds > config["max_gap_seconds"]:
+        raise ValueError("Invalid consumption interval")
+    if seconds <= 0:
         raise ValueError("Invalid consumption interval")
     before, after = number(event["input_before"]), number(event["input_after"])
     expected = (

@@ -226,6 +226,25 @@ async def test_calibration_decision_restart_and_conflict(hass, decision):
     )
 
 
+@pytest.mark.parametrize("percent", [0, 10, 35.5, 100])
+async def test_percent_correction_reload_and_retry(hass, percent):
+    tank = await create_tank(hass)
+    runtime = tank.runtime_data
+    await runtime.book("correction", percent, "percent-correction", unit="%")
+    event = runtime.data["events"][-1]
+    assert event["liters"] == percent * 10
+    assert event["measurement"] == {"value": percent, "unit": "%"}
+    before = deepcopy(runtime.data)
+    await runtime.book("correction", percent, "percent-correction", unit="%")
+    assert runtime.data == before
+    for invalid in [-1, 101, float("nan")]:
+        with pytest.raises(ValueError):
+            await runtime.book("correction", invalid, unit="%")
+    assert runtime.data == before
+    assert await hass.config_entries.async_reload(tank.entry_id)
+    assert tank.runtime_data.data == before
+
+
 async def test_measurement_and_price_booking_reload(hass):
     tank = await create_tank(hass)
     runtime = tank.runtime_data

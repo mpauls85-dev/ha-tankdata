@@ -93,6 +93,8 @@ async def async_setup_entry(hass, entry):
             entry.data["initial"],
         ):
             raise ValueError("Tank definition differs from saved ledger")
+        if store.needs_migration:
+            await store.save(data)
     except (ValueError, TypeError, KeyError, OSError, HomeAssistantError) as err:
         raise ConfigEntryError("TankData storage could not be loaded safely") from err
     entry.runtime_data = TankRuntime(hass, entry, store, data)

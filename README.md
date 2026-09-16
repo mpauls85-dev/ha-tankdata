@@ -6,7 +6,7 @@ Jeder Tank ist ein Gerät; mehrere Tanks erscheinen gemeinsam in der Oberfläche
 
 ## Installation
 
-Version **0.3.0**. HACS-Kategorie: **Integration**.
+Version **0.4.0**. HACS-Kategorie: **Integration**.
 
 ### Über HACS
 
@@ -36,18 +36,44 @@ Die gemeinsame Verwaltungsoberfläche ist für HA-Administratoren verfügbar:
 - Verbraucher hinzufügen, bearbeiten und entfernen;
 - kompakte Bestandskarte mit isometrischer Tankgrafik und den Aktionen **Befüllen** und **Bestand korrigieren**;
 - Tankgerät direkt über den Kopfbereich öffnen; neue Tanks nur in der Übersicht hinzufügen;
-- Historie mit älteren Ereignissen laden und direkt zum Tankgerät wechseln.
+- Historie mit zusammengefassten Läufen; ältere Einträge nachladen.
 
 Die Anzeige aktualisiert sich alle 15 Sekunden; offene Eingaben werden dabei
 nicht überschrieben. Buchungswiederholungen nach Verbindungsfehlern verwenden
 dieselbe Ereignis-ID. Außerhalb der Oberfläche stehen die normalen HA-Actions
 und Sensoren weiterhin zur Verfügung.
 
+Laufzustand- und leistungsbasierte Verbraucher erscheinen pro zusammenhängendem
+Lauf mit Beginn, Ende beziehungsweise letztem erfassten Zeitpunkt, Laufzeit und
+Gesamtverbrauch. Während des Betriebs wächst der Eintrag mit jeder gespeicherten
+Verbrauchsbuchung. Datenlücken, Neustartlücken, geänderte Einstellungen und manuelle
+Tankereignisse trennen die Abschnitte. „Beendet“ bedeutet bestätigtes Ausschalten;
+„Unterbrochen“ kennzeichnet einen Abschnitt ohne belegtes Ende. Intern wird ein zusammenhängender Lauf mit konstantem Durchsatz als fortgeschriebener
+Verbrauchsabschnitt gespeichert – auch bei vielen Sensorupdates. Stunden- und
+Tageswerte ergeben sich aus der tatsächlichen zeitlichen Überlappung mit dem
+Abschnitt. Es gibt keine aufklappbaren Sensor-Einzelbuchungen. Bei rechnerisch
+negativem Bestand bleiben weitere Intervalle zur korrekten Kostenbewertung getrennt.
+Zähler- und Durchflussbuchungen behalten ihre bisherigen Messintervalle.
+
 ### Aktualisierung von 0.1.x / 0.2.x
 
 Bestehende Tanks werden weiterverwendet. Geräte- und Entity-IDs sowie Ledger
 bleiben erhalten; weder Neueinrichtung noch Löschen der Historie ist erforderlich.
 Die bisherigen Verbraucher-Untereinträge werden beim Laden automatisch in eigene Einträge umgewandelt. Der zugeordnete Tank und die Buchungshistorie bleiben erhalten. Deaktivierte Tanks werden erst beim erneuten Aktivieren migriert. Vor Updates die HA-Konfiguration und die TankData-Stores sichern.
+
+## Neu in 0.4.0
+
+- Kalenderauswertung für Tag, Woche, Monat, Jahr und Gesamt mit Zeitraumauswahl.
+- Zusammengefasste Verbrauchsläufe und kompaktere Speicherung im Store v3.
+- Native HA-Kopfzeile mit Seitenleistenmenü, auch auf Mobilgeräten.
+- Überarbeitete Befüll- und Korrekturdialoge, einschließlich Eingabe in Prozent.
+- Diagramme ohne horizontales Scrollen mit auswählbaren Balkendetails.
+
+Beim Update werden vorhandene v1-/v2-Stores automatisch migriert. Vor dem ersten
+Schreiben bleibt eine unveränderte Sicherung der alten Datei erhalten. Bestand,
+Verbrauch und Laufzeit bleiben erhalten; manuelle Ereignisse bleiben nachvollziehbar.
+Vor dem Update die HA-Konfiguration sichern. Ein Downgrade benötigt die zum alten
+Stand passende Sicherung; alleiniger Austausch des Integrationsordners genügt nicht.
 
 ## Verbraucher einrichten
 
@@ -101,7 +127,11 @@ data:
 
 ## Speicherung und Entwicklung
 
-Historie: `.storage/ha_tankdata.<entry_id>` (Store v2; vorhandene v1-Daten werden beim Laden verlustfrei ergänzt). Beschädigte oder unbekannte Versionen werden nicht überschrieben. Buchungen werden erst nach bestätigtem Speichern angezeigt. Das Entfernen eines Eintrags löscht seine Historiedatei nicht.
+Historie: `.storage/ha_tankdata.<entry_id>` (Store v3; vorhandene v1-/v2-Daten werden beim Laden geprüft und konstante
+Brennerintervalle zu Abschnitten verdichtet). Vor dem ersten v3-Schreibvorgang wird
+die unveränderte Altdatei neben dem Store als `.before-v3-<Prüfsumme>` gesichert.
+Befüllungen, Beobachtungen, Korrekturen, Entnahmen und Datenlücken bleiben erhalten.
+Für ein Downgrade ist die passende Sicherung erforderlich. Beschädigte oder unbekannte Versionen werden nicht überschrieben. Buchungen werden erst nach bestätigtem Speichern angezeigt. Das Entfernen eines Eintrags löscht seine Historiedatei nicht.
 
 Tests: `uv sync --group dev --locked`, `uv run pytest`, `uv run ruff check custom_components tests scripts`.
 
@@ -117,19 +147,34 @@ Version 0.3.0 erweitert TankData um:
   die Tanks werden isometrisch mit sichtbarer Flüssigkeitsoberfläche dargestellt. Kapazität bleibt maßgeblich.
   Ideale Formen berücksichtigen keine gewölbten Tankböden; dafür Peiltabelle nutzen.
 - **Messumrechnung:** Intern werden Liter, Volumenprozent und Füllhöhe in cm unterstützt.
-  Die regulären HA-Actions und der Korrekturdialog verwenden Liter. Für cm die innere Höhe
+  Im Korrekturdialog sind Liter oder Volumenprozent (0–100 %) wählbar, auch Zwischenwerte.
+  Prozent beziehen sich auf die Tankkapazität, nicht auf die Füllhöhe. Die regulären
+  HA-Actions verwenden weiterhin Liter. Für cm die innere Höhe
   beziehungsweise den Durchmesser hinterlegen. Peiltabelle: je Zeile `cm;Liter`,
   streng steigend von `0;0` bis Tankhöhe/Kapazität. Messung allein korrigiert den
   berechneten Bestand nicht.
 - **Kosten:** Optionaler Gesamtpreis je neuer Befüllung und Preis des Initialbestands
   in EUR/L. Verbrauchskosten und Bestandswert verwenden einen gleitenden gewichteten
   Mischpreis. Fehlende Preise bleiben unbekannt; 0 EUR ist ein gültiger Preis.
-  Lieferausgaben und Verbrauchskosten werden getrennt gezeigt. Ein geänderter
+  Der Gesamtpreis umfasst auch Liefergebühren und andere Zuschläge; diese gehen
+  damit in den Literpreis ein. Eine separate Lieferkostenanzeige entfällt. Ein geänderter
   Initialpreis aktualisiert auch die darauf beruhende Kostenhistorie.
-- **Statistik:** Heute sowie 7, 30 und 365 Tage, Tagesbalken, Tageswerte,
+- **Statistik:** Heute/Tag mit Stundenwerten, Kalenderwoche (Montag–Sonntag)
+  und Monat mit Tageswerten, Jahr mit Monatswerten sowie Gesamt mit Jahreswerten.
+  Tag und Woche werden über den Kalender gewählt, Monate über die Monatsauswahl,
+  Jahre über die Jahresauswahl. Pfeile wechseln zum vorherigen/nächsten Zeitraum;
+  eine Schaltfläche führt zum aktuellen Zeitraum zurück. Diagramm und Wertetabelle
+  zeigen den gewählten Zeitraum in der Home-Assistant-Zeitzone, einschließlich
+  Zeitumstellungen. Alle Balken passen ohne horizontales Scrollen in die
+  Diagrammbreite; auf schmalen Displays werden Achsenbeschriftungen ausgedünnt.
+  Antippen eines Balkens zeigt den genauen Zeitraum, Verbrauch und die Abdeckung.
+  Zukünftige Abschnitte bleiben leer. Gesamt beginnt mit dem
+  ersten gespeicherten Ereignis oder Abdeckungsintervall. Zusätzlich:
   Verbrauch je Verbraucher, Laufzeit, Kosten und Datenabdeckung. Abdeckung ist erst
   seit dieser Erweiterung verfügbar; frühere Lücken werden nicht als Nullverbrauch
-  interpretiert. Zeitbasierter Verbrauch wird auf lokale Kalendertage aufgeteilt.
+  interpretiert. Zeitbasierter Verbrauch, Laufzeit und Kosten werden anteilig auf die
+  gewählten Zeitabschnitte aufgeteilt. Bestandswert und Mischpreis bleiben als
+  aktuelle Werte gekennzeichnet.
 - **Prognosen:** Mittelwert vollständiger Tage aus den letzten 30 Tagen, mindestens
   sieben vollständige aktuelle Tage. Anzeige für 7/30 Tage, Reserve und Leerstand.
   Die Schwankungsspanne ist keine statistisch garantierte Vorhersage. Ohne aktuelle
